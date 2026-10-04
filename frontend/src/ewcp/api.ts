@@ -61,6 +61,19 @@ function authHeaders(apiKey: string): Record<string, string> {
   return apiKey ? { "x-ewcp-api-key": apiKey } : {};
 }
 
+// Gateway CSRF middleware requires the double-submit pair on state-changing
+// requests when auth is enabled — echo the csrf_token cookie back as a header.
+function csrfHeader(): Record<string, string> {
+  if (typeof document === "undefined") return {};
+  const m = /(?:^|;\s*)csrf_token=([^;]+)/.exec(document.cookie);
+  const token = m?.[1];
+  return token ? { "x-csrf-token": decodeURIComponent(token) } : {};
+}
+
+function mutatingHeaders(apiKey: string): Record<string, string> {
+  return { ...authHeaders(apiKey), ...csrfHeader() };
+}
+
 export async function createTask(
   args: {
     intent: string;
@@ -81,7 +94,7 @@ export async function createTask(
   if (args.books) fd.set("books", args.books);
   const res = await fetch(`${API}/tasks`, {
     method: "POST",
-    headers: authHeaders(args.apiKey),
+    headers: mutatingHeaders(args.apiKey),
     body: fd,
   });
   return parse(res);
@@ -97,7 +110,7 @@ export async function supplyInputs(
   if (args.books) fd.set("books", args.books);
   const res = await fetch(`${API}/tasks/${workrunId}/inputs`, {
     method: "POST",
-    headers: authHeaders(args.apiKey),
+    headers: mutatingHeaders(args.apiKey),
     body: fd,
   });
   return parse(res);
@@ -119,7 +132,7 @@ export async function decide(
 ): Promise<RunView> {
   const res = await fetch(`${API}/workruns/${workrunId}/decisions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders(args.apiKey) },
+    headers: { "Content-Type": "application/json", ...mutatingHeaders(args.apiKey) },
     body: JSON.stringify({
       tenant_id: args.tenant,
       decided_by: args.decidedBy,
@@ -156,8 +169,31 @@ export async function verifyArtifacts(
   const fd = new FormData();
   fd.set("evidence_json", args.evidenceJson);
   for (const f of args.files) fd.append("files", f);
-  const res = await fetch(`${API}/verify`, { method: "POST", body: fd });
+  const res = await fetch(`${API}/verify`, {
+    method: "POST",
+    headers: csrfHeader(),
+    body: fd,
+  });
   return parse(res);
+}
+
+export async function downloadDeliverable(
+  workrunId: string,
+  deliverableId: string,
+  args: { apiKey: string; name?: string },
+): Promise<void> {
+  const res = await fetch(
+    `${API}/workruns/${workrunId}/deliverables/${deliverableId}`,
+    { headers: authHeaders(args.apiKey) },
+  );
+  if (!res.ok) throw new EwcpError(res.status, await res.text());
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = args.name ?? deliverableId;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function listRuns(

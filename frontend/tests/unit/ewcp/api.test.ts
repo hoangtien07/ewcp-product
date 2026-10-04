@@ -77,8 +77,8 @@ describe("ewcp api client", () => {
     const fd = call?.init?.body as FormData;
     expect(fd.get("evidence_json")).toBeTruthy();
     expect(fd.getAll("files")).toHaveLength(1);
-    // verify is public — no auth header must be set
-    expect(call?.init?.headers).toBeUndefined();
+    // verify is public — no auth header must be set (csrf cookie absent in test env)
+    expect(call?.init?.headers).toEqual({});
   });
 
   test("non-2xx raises EwcpError with status + detail", async () => {

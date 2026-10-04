@@ -12,6 +12,8 @@ import { UnverifiedBadge } from "@/ewcp/components/unverified-badge";
 const CREDS_KEY = "ewcp_creds";
 
 export default function EwcpPage() {
+  // apiKey stays in memory only (repo rule: no tokens in web storage);
+  // tenant/decidedBy are non-secret prefs and may persist.
   const [creds, setCreds] = useState({
     apiKey: "",
     tenant: "demo",
@@ -21,7 +23,14 @@ export default function EwcpPage() {
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(CREDS_KEY);
-      if (raw) setCreds((c) => ({ ...c, ...JSON.parse(raw) }));
+      if (raw) {
+        const saved = JSON.parse(raw) as Partial<typeof creds>;
+        setCreds((c) => ({
+          ...c,
+          tenant: saved.tenant ?? c.tenant,
+          decidedBy: saved.decidedBy ?? c.decidedBy,
+        }));
+      }
     } catch {
       /* fresh session */
     }
@@ -31,7 +40,10 @@ export default function EwcpPage() {
     setCreds((c) => {
       const next = { ...c, ...patch };
       try {
-        sessionStorage.setItem(CREDS_KEY, JSON.stringify(next));
+        sessionStorage.setItem(
+          CREDS_KEY,
+          JSON.stringify({ tenant: next.tenant, decidedBy: next.decidedBy }),
+        );
       } catch {
         /* private mode */
       }

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createTask,
+  downloadDeliverable,
   getRun,
   supplyInputs,
   type RunView,
@@ -59,6 +60,43 @@ export function TaskThread({ creds }: { creds: Creds }) {
   const [err, setErr] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Persist the active run id so a reload restores the workspace (a pending
+  // ask-back or approval must not become unreachable). Key is a non-secret id.
+  const updateRun = useCallback((r: RunView | null) => {
+    setRun(r);
+    try {
+      if (r?.workrun_id) {
+        sessionStorage.setItem("ewcp_last_run", r.workrun_id);
+      } else {
+        sessionStorage.removeItem("ewcp_last_run");
+      }
+    } catch {
+      /* private mode */
+    }
+  }, []);
+
+  useEffect(() => {
+    let id: string | null = null;
+    try {
+      id = sessionStorage.getItem("ewcp_last_run");
+    } catch {
+      /* private mode */
+    }
+    if (!id) return;
+    void getRun(id, { apiKey: creds.apiKey })
+      .then((r) => updateRun(r))
+      .catch(() => {
+        try {
+          sessionStorage.removeItem("ewcp_last_run");
+        } catch {
+          /* ignore */
+        }
+      });
+    // restore once on mount — creds are loaded async; a key change does not
+    // re-restore a dismissed run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const stopPoll = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = null;
@@ -79,14 +117,14 @@ export function TaskThread({ creds }: { creds: Creds }) {
     pollRef.current = setInterval(() => {
       void (async () => {
         try {
-          setRun(await getRun(run.workrun_id, creds));
+          updateRun(await getRun(run.workrun_id, creds));
         } catch {
           /* transient */
         }
       })();
     }, 2000);
     return stopPoll;
-  }, [run, creds, stopPoll]);
+  }, [run, creds, stopPoll, updateRun]);
 
   useEffect(() => stopPoll, [stopPoll]);
 
@@ -105,9 +143,9 @@ export function TaskThread({ creds }: { creds: Creds }) {
       });
       if (res.status === "clarify") {
         setClarify(res.clarify_question ?? "Chưa rõ yêu cầu.");
-        setRun(null);
+        updateRun(null);
       } else {
-        setRun(res as RunView);
+        updateRun(res as RunView);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -121,7 +159,7 @@ export function TaskThread({ creds }: { creds: Creds }) {
     setBusy(true);
     setErr(null);
     try {
-      setRun(
+      updateRun(
         await supplyInputs(run.workrun_id, {
           tenant: creds.tenant,
           apiKey: creds.apiKey,
@@ -262,7 +300,7 @@ export function TaskThread({ creds }: { creds: Creds }) {
               q={q}
               run={run}
               creds={{ ...creds }}
-              onDone={setRun}
+              onDone={updateRun}
             />
           ))}
 
@@ -278,7 +316,7 @@ export function TaskThread({ creds }: { creds: Creds }) {
               }}
               run={run}
               creds={{ ...creds }}
-              onDone={setRun}
+              onDone={updateRun}
             />
           )}
 
@@ -290,11 +328,27 @@ export function TaskThread({ creds }: { creds: Creds }) {
               </div>
               <ul className="space-y-1">
                 {run.deliverables.map((d) => (
-                  <li key={d.deliverable_id} className="font-mono text-xs">
-                    {d.name || d.uri} ·{" "}
-                    <span className="text-zinc-400">
-                      {d.sha256.slice(0, 12)}…
+                  <li key={d.deliverable_id} className="flex items-center gap-2 font-mono text-xs">
+                    <span className="flex-1">
+                      {d.name || d.uri} ·{" "}
+                      <span className="text-zinc-400">
+                        {d.sha256.slice(0, 12)}…
+                      </span>
                     </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void downloadDeliverable(run.workrun_id, d.deliverable_id, {
+                          apiKey: creds.apiKey,
+                          name: d.name || d.deliverable_id,
+                        }).catch((e: unknown) =>
+                          setErr(e instanceof Error ? e.message : String(e)),
+                        )
+                      }
+                      className="rounded border border-zinc-300 px-2 py-0.5 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    >
+                      Tải
+                    </button>
                   </li>
                 ))}
               </ul>
