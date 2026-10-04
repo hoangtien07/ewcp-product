@@ -58,3 +58,11 @@ curl localhost:8001/api/ewcp/_status
 - File ask-back: upstream clarification form has no file field (verified
   spike) → workaround: ask-back renders in EWCP pane with an upload slot
   backed by `/api/uploads`; no upstream patch.
+
+## Exploratory-lane firewall (Q24 binding condition)
+
+Exploratory output (upstream agent lane) can never promote into a governed
+WorkRun — there is no promote endpoint; a user must re-submit through
+`POST /api/ewcp/tasks`. Frontend rule: any artifact surfaced from the
+exploratory lane carries `UnverifiedBadge` chrome — provenance is not
+verification (the Perplexity trap: a cited source is not a sealed artifact).
