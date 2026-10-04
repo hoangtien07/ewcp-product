@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -16,9 +18,11 @@ def _app(service: EwcpKernelService) -> FastAPI:
 
 
 @pytest.mark.asyncio
-async def test_service_reports_missing_kernel() -> None:
+async def test_service_reports_missing_kernel(monkeypatch: pytest.MonkeyPatch) -> None:
+    # force `from ewcp.api.app import create_app` to fail regardless of PYTHONPATH
+    for mod in ("ewcp", "ewcp.api", "ewcp.api.app"):
+        monkeypatch.setitem(sys.modules, mod, None)
     service = EwcpKernelService()
-    # in the extension test env there is no `ewcp` package on path
     service._load_kernel()
     status = service.status()
     assert status["extension"] == "ewcp_packs"

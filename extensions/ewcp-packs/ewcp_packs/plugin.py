@@ -21,6 +21,13 @@ from fastapi import APIRouter, Request, Response
 
 _FORWARDED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
+# Request headers allowlisted into the kernel: identity is carried only by
+# x-ewcp-api-key (the kernel binds key<->tenant itself); nothing else a client
+# sends may reach kernel authorization.
+_ALLOWED_HEADERS = {"content-type", "accept", "x-ewcp-api-key"}
+# Response headers that must not pass through: httpx already decoded the body,
+# and content-length no longer matches the decoded payload.
+_RESP_STRIP_HEADERS = _HOP_HEADERS | {"content-encoding"}
 
 
 class EwcpKernelService:
@@ -36,11 +43,21 @@ class EwcpKernelService:
         self.kernel_loaded: bool = False
         self.kernel_error: str | None = None
         self._client: httpx.AsyncClient | None = None
+        self._kernel_app: Any = None
+        self._lifespan_cm: Any = None
 
     async def start(self, deps: ExtensionRuntimeDeps) -> None:
         self._load_kernel()
+        # ASGITransport never runs the app's lifespan — drive it manually so
+        # kernel startup hooks (if any) execute before reporting loaded.
+        if self._kernel_app is not None:
+            self._lifespan_cm = self._kernel_app.router.lifespan_context(self._kernel_app)
+            await self._lifespan_cm.__aenter__()
 
     async def stop(self) -> None:
+        if self._lifespan_cm is not None:
+            await self._lifespan_cm.__aexit__(None, None, None)
+            self._lifespan_cm = None
         await self.aclose()
 
     def _load_kernel(self) -> None:
@@ -52,11 +69,11 @@ class EwcpKernelService:
             self.kernel_loaded = False
             return
         home = Path(self.config.get("data_dir") or os.environ.get("DEER_FLOW_HOME", ".deer-flow")) / "ewcp"
-        kernel_app = create_app(
+        self._kernel_app = create_app(
             store_dir=home / "store",
             work_dir=home / "work",
         )
-        transport = httpx.ASGITransport(app=kernel_app)
+        transport = httpx.ASGITransport(app=self._kernel_app)
         self._client = httpx.AsyncClient(
             transport=transport,
             base_url="http://ewcp.kernel",
@@ -78,8 +95,13 @@ class EwcpKernelService:
                 status_code=503,
                 media_type="application/json",
             )
-        url = httpx.URL(path="/" + path, params=request.query_params)
-        headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_HEADERS}
+        # Raw query_string preserves repeated keys (a params= mapping would
+        # collapse them to the last value).
+        url = httpx.URL(
+            path="/" + path,
+            query=bytes(request.scope.get("query_string", b"")),
+        )
+        headers = {k: v for k, v in request.headers.items() if k.lower() in _ALLOWED_HEADERS}
         body = await request.body()
         upstream = await self._client.request(
             request.method,
@@ -87,7 +109,7 @@ class EwcpKernelService:
             content=body if body else None,
             headers=headers,
         )
-        resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_HEADERS}
+        resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _RESP_STRIP_HEADERS}
         return Response(
             content=upstream.content,
             status_code=upstream.status_code,
