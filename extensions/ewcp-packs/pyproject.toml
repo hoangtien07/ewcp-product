@@ -1,0 +1,37 @@
+[project]
+name = "ewcp-packs"
+version = "0.1.0"
+description = "EWCP governed-outcome packs extension for the DeerFlow product fork (PA-A)"
+readme = "README.md"
+requires-python = ">=3.12"
+# NOTE: the EWCP kernel (package `ewcp`, repo enterprise-work-control-plane) is
+# deliberately NOT declared here. Kernel stays in its own repo (Q20) and is
+# provided at runtime: dev -> `uv pip install -e ../enterprise-work-control-plane`,
+# prod -> git+https pinned dep in the deployment manifest. The extension loads
+# and reports kernel_loaded=false when ewcp is absent (health check surfaces it).
+dependencies = [
+    "deerflow-extension-api>=0.2,<0.3",
+    "fastapi>=0.115.0,<1",
+    "httpx>=0.27",
+    # Kernel transitive deps — required to mount `ewcp.api.app` in-process.
+    # Mirror pins from enterprise-work-control-plane/pyproject.toml so the
+    # extension's own lock entry carries everything the kernel imports.
+    "pypdf>=6,<7",
+    "openpyxl>=3.1,<4",
+    "python-multipart>=0.0.9",
+    "slowapi>=0.1.9,<1",
+]
+
+[project.entry-points."deerflow.extensions"]
+ewcp_packs = "ewcp_packs:install"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ewcp_packs"]
+
+[tool.ruff]
+line-length = 240
+target-version = "py312"
