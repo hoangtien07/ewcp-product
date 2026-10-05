@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { decide, type PendingQuestion, type RunView } from "@/ewcp/api";
+import { decisionLabel } from "@/ewcp/labels";
 
 const KIND_LABEL: Record<string, string> = {
   option_choice: "Chọn phương án xử lý",
@@ -21,11 +22,15 @@ export function DecisionCard({
   run,
   creds,
   onDone,
+  disabledHint,
 }: {
   q: PendingQuestion;
   run: RunView;
   creds: { apiKey: string; tenant: string; decidedBy: string };
   onDone: (run: RunView) => void;
+  // when set (approval gate while questions are still open — kernel 409s
+  // a decision posted early), buttons stay rendered but inert
+  disabledHint?: string;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -71,7 +76,7 @@ export function DecisionCard({
 
   return (
     <div className="rounded-lg border border-zinc-300 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-      <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+      <div className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
         {KIND_LABEL[q.kind] ?? q.kind}
       </div>
       <p className="mt-1 text-sm whitespace-pre-wrap">{q.prompt}</p>
@@ -79,7 +84,7 @@ export function DecisionCard({
         {options.map((opt) => (
           <button
             key={opt}
-            disabled={busy !== null}
+            disabled={busy !== null || disabledHint !== undefined}
             onClick={() => submit(opt)}
             className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
               opt === "approve"
@@ -89,10 +94,15 @@ export function DecisionCard({
                   : "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
             }`}
           >
-            {busy === opt ? "…" : opt}
+            {busy === opt ? "…" : decisionLabel(opt)}
           </button>
         ))}
       </div>
+      {disabledHint && (
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+          {disabledHint}
+        </p>
+      )}
       {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
     </div>
   );

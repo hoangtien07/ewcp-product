@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 
 import { listRuns, type RunView } from "@/ewcp/api";
+import { outcomeLabel, statusLabel } from "@/ewcp/labels";
 
 interface Creds {
   apiKey: string;
@@ -15,14 +16,18 @@ interface Creds {
 
 // kernel TaskStatus emits lowercase enum values
 const STATUS_CLS: Record<string, string> = {
-  verified: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  verified:
+    "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
   failed: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
   rejected: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
   cancelled: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-  awaiting_input: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  awaiting_approval: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  awaiting_input:
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  awaiting_approval:
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
 };
-const DEFAULT_CLS = "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
+const DEFAULT_CLS =
+  "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
 
 export function TaskList({
   creds,
@@ -86,7 +91,7 @@ export function TaskList({
                 : "border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
             }`}
           >
-            <p className="line-clamp-2 text-xs font-medium leading-4">
+            <p className="line-clamp-2 text-xs leading-4 font-medium">
               {r.intent || "(không có mô tả)"}
             </p>
             <p className="mt-1 flex items-center gap-1.5 text-[11px]">
@@ -95,9 +100,11 @@ export function TaskList({
                   STATUS_CLS[r.status] ?? DEFAULT_CLS
                 }`}
               >
-                {r.status}
+                {statusLabel(r.status)}
               </span>
-              <span className="truncate text-zinc-400">{r.outcome_type}</span>
+              <span className="truncate text-zinc-400">
+                {outcomeLabel(r.outcome_type)}
+              </span>
             </p>
           </button>
         </li>

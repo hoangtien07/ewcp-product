@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 
 import { getManifest, type RunView } from "@/ewcp/api";
+import { decisionLabel } from "@/ewcp/labels";
 
 import { VerifiedSealBadge } from "./unverified-badge";
 
@@ -22,7 +23,9 @@ export function ManifestCard({
   run: RunView;
   creds: { apiKey: string };
 }) {
-  const [manifest, setManifest] = useState<Record<string, unknown> | null>(null);
+  const [manifest, setManifest] = useState<Record<string, unknown> | null>(
+    null,
+  );
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,9 +59,7 @@ export function ManifestCard({
 
   const checks = (manifest.checks as ManifestCheck[] | undefined) ?? [];
   const hash =
-    typeof manifest.manifest_hash === "string"
-      ? manifest.manifest_hash
-      : "…";
+    typeof manifest.manifest_hash === "string" ? manifest.manifest_hash : "…";
 
   return (
     <div className="space-y-3">
@@ -89,7 +90,8 @@ export function ManifestCard({
       )}
       {run.decision && (
         <p className="text-xs text-zinc-500">
-          Quyết định: <b>{run.decision.answer}</b> bởi {run.decision.decided_by}
+          Quyết định: <b>{decisionLabel(run.decision.answer)}</b> bởi{" "}
+          {run.decision.decided_by}
         </p>
       )}
       <a

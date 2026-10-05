@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 
 import { getOutcome, type RunView } from "@/ewcp/api";
+import { reconStatusLabel } from "@/ewcp/labels";
 
 interface ReconRow {
   status: string;
@@ -36,11 +37,15 @@ interface DossierResult {
 }
 
 const RECON_CHIP: Record<string, string> = {
-  MATCHED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
-  AMOUNT_MISMATCH: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-  UNVERIFIED_SOURCE: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  MATCHED:
+    "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  AMOUNT_MISMATCH:
+    "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  UNVERIFIED_SOURCE:
+    "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
 };
-const EXC_CHIP = "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
+const EXC_CHIP =
+  "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
 
 const ROW_ICON: Record<string, string> = {
   pass: "text-emerald-600",
@@ -50,7 +55,9 @@ const ROW_ICON: Record<string, string> = {
 
 function Chip({ label, cls }: { label: string; cls: string }) {
   return (
-    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
+    <span
+      className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}
+    >
       {label}
     </span>
   );
@@ -62,7 +69,7 @@ function ReconStudio({ rows }: { rows: ReconRow[] }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        <span className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
           Bảng đối soát
         </span>
         <span className="text-xs text-zinc-500">
@@ -78,7 +85,10 @@ function ReconStudio({ rows }: { rows: ReconRow[] }) {
           {exceptions.map((r, i) => (
             <li key={i} className="py-2">
               <div className="flex items-center gap-2">
-                <Chip label={r.status} cls={RECON_CHIP[r.status] ?? EXC_CHIP} />
+                <Chip
+                  label={reconStatusLabel(r.status)}
+                  cls={RECON_CHIP[r.status] ?? EXC_CHIP}
+                />
                 <span className="font-mono text-xs">{r.source}</span>
                 {typeof r.confidence === "number" && (
                   <span className="ml-auto text-[11px] text-zinc-400">
@@ -108,7 +118,7 @@ function DossierStudio({ result }: { result: DossierResult }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        <span className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
           Checklist hồ sơ
         </span>
         <Chip
@@ -132,7 +142,9 @@ function DossierStudio({ result }: { result: DossierResult }) {
       <ul className="divide-y divide-zinc-200 text-sm dark:divide-zinc-700">
         {result.rows.map((r, i) => (
           <li key={i} className="flex gap-2 py-2">
-            <span className={`font-bold ${ROW_ICON[r.status] ?? "text-zinc-400"}`}>
+            <span
+              className={`font-bold ${ROW_ICON[r.status] ?? "text-zinc-400"}`}
+            >
               {r.status === "pass" ? "✓" : r.status === "warn" ? "!" : "✗"}
             </span>
             <div className="min-w-0 flex-1">
@@ -151,7 +163,7 @@ function DossierStudio({ result }: { result: DossierResult }) {
       </ul>
       {result.documents.length > 0 && (
         <div className="border-t border-zinc-200 pt-2 dark:border-zinc-700">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          <p className="mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
             Chứng từ đã phân loại
           </p>
           <ul className="space-y-0.5 font-mono text-[11px] text-zinc-500">
