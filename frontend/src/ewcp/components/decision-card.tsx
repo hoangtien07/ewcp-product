@@ -10,6 +10,7 @@ import { decide, type PendingQuestion, type RunView } from "@/ewcp/api";
 
 const KIND_LABEL: Record<string, string> = {
   option_choice: "Chọn phương án xử lý",
+  anomaly_confirm: "Xác nhận giá trị bất thường",
   confirm_value: "Xác nhận giá trị bất thường",
   approval: "Phê duyệt kết quả",
   missing_input: "Cần bổ sung đầu vào",

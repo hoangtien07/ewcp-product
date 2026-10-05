@@ -72,14 +72,14 @@ describe("ewcp api client", () => {
 
   test("verify sends evidence_json + artifact files, no auth needed", async () => {
     const calls = mockFetch(200, {
-      ok: true,
+      verdict: "PASS",
       manifest_ok: true,
       artifacts: [],
     });
     const ev = new File(["{}"], "evidence.json");
     const art = new File(["x"], "recon.xlsx");
     const res = await verifyArtifacts({ evidenceJson: ev, files: [art] });
-    expect(res.ok).toBe(true);
+    expect(res.verdict).toBe("PASS");
     const call = calls.at(0);
     const fd = call?.init?.body as FormData;
     expect(fd.get("evidence_json")).toBeTruthy();

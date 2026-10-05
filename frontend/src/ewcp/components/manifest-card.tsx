@@ -29,7 +29,7 @@ export function ManifestCard({
     // never show a previous run's manifest under this run's seal
     setManifest(null);
     setErr(null);
-    if (run.status !== "VERIFIED") return;
+    if (run.status !== "verified") return;
     let alive = true;
     getManifest(run.workrun_id, creds)
       .then((m) => {
@@ -43,7 +43,7 @@ export function ManifestCard({
     };
   }, [run.workrun_id, run.status, creds.apiKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (run.status !== "VERIFIED") return null;
+  if (run.status !== "verified") return null;
 
   const checks = (manifest?.checks as ManifestCheck[] | undefined) ?? [];
   const hash =

@@ -131,19 +131,19 @@ export function VerifyView({
       {result && (
         <div
           className={`rounded-lg border-2 p-4 ${
-            result.ok && result.manifest_ok
+            result.verdict === "PASS" && result.manifest_ok
               ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40"
               : "border-red-600 bg-red-50 dark:bg-red-950/40"
           }`}
         >
           <div
             className={`text-lg font-bold ${
-              result.ok && result.manifest_ok
+              result.verdict === "PASS" && result.manifest_ok
                 ? "text-emerald-700 dark:text-emerald-300"
                 : "text-red-700 dark:text-red-300"
             }`}
           >
-            {result.ok && result.manifest_ok
+            {result.verdict === "PASS" && result.manifest_ok
               ? "PASS — bằng chứng nguyên vẹn"
               : "FAIL — bằng chứng bị thay đổi"}
           </div>

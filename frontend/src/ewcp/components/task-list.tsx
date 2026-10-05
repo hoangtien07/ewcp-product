@@ -13,11 +13,14 @@ interface Creds {
   tenant: string;
 }
 
+// kernel TaskStatus emits lowercase enum values
 const STATUS_CLS: Record<string, string> = {
-  VERIFIED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
-  FAILED: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-  REJECTED: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-  AWAITING_INPUT: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  verified: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  failed: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  rejected: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  cancelled: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  awaiting_input: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  awaiting_approval: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
 };
 const DEFAULT_CLS = "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
 
