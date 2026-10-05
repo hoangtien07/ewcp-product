@@ -11,9 +11,9 @@ touch is recorded below. Budget: **≤ 8 files**.
 
 | # | Upstream file | Change | Why | Date |
 |---|---------------|--------|-----|------|
-| — | _(none yet)_ | — | — | — |
+| 1 | `frontend/src/components/workspace/workspace-nav-chat-list.tsx` | One `SidebarMenuItem` + `Link` to `/ewcp` (ShieldCheck icon, label "EWCP") at the top of the workspace nav | No surface in the product led to `/ewcp`; sidebar nav is the least invasive entry point matching upstream nav-item style | 2026-10-05 |
 
-Current count: **0 / 8**.
+Current count: **1 / 8**.
 
 ## Merge-sync policy
 

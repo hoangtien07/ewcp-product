@@ -16,6 +16,7 @@ import {
   supplyInputs,
   type RunView,
 } from "@/ewcp/api";
+import { statusLabel } from "@/ewcp/labels";
 
 import { DecisionCard } from "./decision-card";
 import { ManifestCard } from "./manifest-card";
@@ -166,6 +167,9 @@ export function TaskThread({
   // need the approval card or the run wedges with no control left.
   const showApproval =
     run?.status === "candidate_complete" || run?.status === "awaiting_approval";
+  // kernel 409s an approval decision while pending_questions are still open —
+  // keep the gate visible but inert until every question is answered
+  const questionsOpen = (run?.pending_questions.length ?? 0) > 0;
 
   return (
     <div className="space-y-4">
@@ -179,12 +183,8 @@ export function TaskThread({
           className="w-full resize-y rounded-md border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-600"
         />
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
-          <FileSlot
-            label="Zip hóa đơn (XML/PDF)"
-            file={zip}
-            onPick={setZip}
-          />
-          <FileSlot label="Sổ kế toán (CSV/XLSX)" file={books} onPick={setBooks} />
+          <FileSlot label="Zip hóa đơn (XML/PDF)" file={zip} onPick={setZip} />
+          <FileSlot label="Sổ kế toán (CSV)" file={books} onPick={setBooks} />
           <FileSlot
             label="Zip hồ sơ chứng từ (dossier)"
             file={dossier}
@@ -211,7 +211,8 @@ export function TaskThread({
           )}
           {run && (
             <span className="text-xs text-zinc-500">
-              run <code className="font-mono">{run.workrun_id.slice(0, 8)}…</code>
+              run{" "}
+              <code className="font-mono">{run.workrun_id.slice(0, 8)}…</code>
             </span>
           )}
         </div>
@@ -221,7 +222,8 @@ export function TaskThread({
         <div className="rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           <b>Hệ thống cần rõ hơn:</b> {clarify}
           <div className="mt-1 text-xs opacity-80">
-            (Lane khám phá không governed — chỉ nghiệp vụ đã đăng ký mới được niêm phong.)
+            (Lane khám phá không governed — chỉ nghiệp vụ đã đăng ký mới được
+            niêm phong.)
           </div>
         </div>
       )}
@@ -237,7 +239,7 @@ export function TaskThread({
           {/* progress */}
           <div className="rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              <div className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
                 Trạng thái
               </div>
               <div
@@ -249,7 +251,7 @@ export function TaskThread({
                       : "bg-blue-100 text-blue-700"
                 }`}
               >
-                {run.status}
+                {statusLabel(run.status)}
               </div>
             </div>
             <p className="mt-1 text-sm">{run.step_label}</p>
@@ -308,18 +310,24 @@ export function TaskThread({
               run={run}
               creds={{ ...creds }}
               onDone={onRun}
+              disabledHint={
+                questionsOpen ? "Trả lời hết câu hỏi trước" : undefined
+              }
             />
           )}
 
           {/* deliverables */}
           {run.deliverables.length > 0 && (
             <div className="rounded-lg border border-zinc-300 bg-white p-4 text-sm dark:border-zinc-700 dark:bg-zinc-900">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              <div className="mb-2 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
                 Deliverables
               </div>
               <ul className="space-y-1">
                 {run.deliverables.map((d) => (
-                  <li key={d.deliverable_id} className="flex items-center gap-2 font-mono text-xs">
+                  <li
+                    key={d.deliverable_id}
+                    className="flex items-center gap-2 font-mono text-xs"
+                  >
                     <span className="flex-1">
                       {d.name || d.uri} ·{" "}
                       <span className="text-zinc-400">
@@ -329,10 +337,14 @@ export function TaskThread({
                     <button
                       type="button"
                       onClick={() =>
-                        void downloadDeliverable(run.workrun_id, d.deliverable_id, {
-                          apiKey: creds.apiKey,
-                          name: d.name || d.deliverable_id,
-                        }).catch((e: unknown) =>
+                        void downloadDeliverable(
+                          run.workrun_id,
+                          d.deliverable_id,
+                          {
+                            apiKey: creds.apiKey,
+                            name: d.name || d.deliverable_id,
+                          },
+                        ).catch((e: unknown) =>
                           setErr(e instanceof Error ? e.message : String(e)),
                         )
                       }

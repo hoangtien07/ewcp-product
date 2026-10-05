@@ -5,6 +5,7 @@ import {
   CalendarClock,
   MessagesSquare,
   BlocksIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -30,6 +31,16 @@ export function WorkspaceNavChatList() {
   return (
     <SidebarGroup className="pt-1">
       <SidebarMenu>
+        {/* EWCP touch (UPSTREAM_TOUCH.md #1): entry point to the governed
+            workbench — a product-surface name, not an i18n string */}
+        <SidebarMenuItem>
+          <SidebarMenuButton isActive={pathname.startsWith("/ewcp")} asChild>
+            <Link className="text-muted-foreground" href="/ewcp">
+              <ShieldCheckIcon />
+              <span>EWCP</span>
+            </Link>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton isActive={pathname === "/workspace/chats"} asChild>
             <Link className="text-muted-foreground" href="/workspace/chats">

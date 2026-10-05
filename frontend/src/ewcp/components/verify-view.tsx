@@ -9,13 +9,10 @@ import { useState } from "react";
 
 import { getEvidence, verifyArtifacts, type VerifyResult } from "@/ewcp/api";
 
-export function VerifyView({
-  initialRun,
-  creds,
-}: {
-  initialRun?: string;
-  creds: { apiKey: string };
-}) {
+export function VerifyView({ initialRun }: { initialRun?: string }) {
+  // apiKey stays in memory only (repo rule: no tokens in web storage) —
+  // only the "Tải evidence" call needs it; /verify itself is unauthenticated.
+  const [apiKey, setApiKey] = useState("");
   const [runId, setRunId] = useState(initialRun ?? "");
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [artifactFiles, setArtifactFiles] = useState<File[]>([]);
@@ -27,7 +24,7 @@ export function VerifyView({
     if (!runId.trim()) return;
     setErr(null);
     try {
-      const ev = await getEvidence(runId.trim(), creds);
+      const ev = await getEvidence(runId.trim(), { apiKey });
       const blob = new Blob([JSON.stringify(ev, null, 2)], {
         type: "application/json",
       });
@@ -48,7 +45,10 @@ export function VerifyView({
     setResult(null);
     try {
       setResult(
-        await verifyArtifacts({ evidenceJson: evidenceFile, files: artifactFiles }),
+        await verifyArtifacts({
+          evidenceJson: evidenceFile,
+          files: artifactFiles,
+        }),
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -67,6 +67,17 @@ export function VerifyView({
           Tải evidence export của run, upload lại cùng các artifact. Hệ thống đo
           lại sha256 từng file + recompute manifest_hash — sửa 1 byte cũng FAIL.
         </p>
+        <label className="mt-3 block text-xs text-zinc-500">
+          API key tenant — chỉ cần khi kernel bật auth
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="để trống = dev mode"
+            autoComplete="off"
+            className="mt-1 w-full rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 dark:border-zinc-600"
+          />
+        </label>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input
             value={runId}
@@ -94,9 +105,7 @@ export function VerifyView({
               type="file"
               accept=".json,application/json"
               className="hidden"
-              onChange={(e) =>
-                setEvidenceFile(e.target.files?.[0] ?? null)
-              }
+              onChange={(e) => setEvidenceFile(e.target.files?.[0] ?? null)}
             />
           </label>
           <label className="block cursor-pointer rounded-md border border-dashed border-zinc-400 px-3 py-2 text-sm">
@@ -155,9 +164,7 @@ export function VerifyView({
           <ul className="mt-3 space-y-1 text-xs">
             {result.artifacts.map((a) => (
               <li key={a.deliverable_id} className="flex gap-2">
-                <span
-                  className={a.ok ? "text-emerald-600" : "text-red-600"}
-                >
+                <span className={a.ok ? "text-emerald-600" : "text-red-600"}>
                   {a.ok ? "OK" : a.missing ? "MISSING" : "MISMATCH"}
                 </span>
                 <span className="font-mono">{a.name}</span>
