@@ -90,6 +90,10 @@ export function TaskThread({
   // pack registry from GET /outcomes — FALLBACK_SPECS keeps the pane
   // working against kernels that predate the registry endpoint
   const [specs, setSpecs] = useState<OutcomeSpecView[]>(FALLBACK_SPECS);
+  // true once GET /outcomes answered — until then the pane runs on the
+  // static fallback and surfaces a notice instead of silently
+  // degrading (a wrong/expired key otherwise looks like missing packs)
+  const [specsLive, setSpecsLive] = useState(false);
   const [clarify, setClarify] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -142,7 +146,10 @@ export function TaskThread({
     let dead = false;
     void listOutcomes({ apiKey: creds.apiKey })
       .then((s) => {
-        if (!dead && Array.isArray(s) && s.length > 0) setSpecs(s);
+        if (!dead && Array.isArray(s) && s.length > 0) {
+          setSpecs(s);
+          setSpecsLive(true);
+        }
       })
       .catch(() => {
         /* pre-registry kernel or offline — stay on FALLBACK_SPECS */
@@ -313,6 +320,12 @@ export function TaskThread({
             </span>
           ))}
         </p>
+        {!specsLive && (
+          <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            Spec tĩnh — không đọc được registry kernel (kiểm tra API key);
+            một số nghiệp vụ có thể thiếu.
+          </p>
+        )}
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
           {slots.map((s) => (
             <FileSlot
