@@ -13,7 +13,7 @@ interface ReconRow {
   status: string;
   source: string;
   sources: string[];
-  confidence: number;
+  confidence?: number;
   detail: string;
 }
 
@@ -80,9 +80,11 @@ function ReconStudio({ rows }: { rows: ReconRow[] }) {
               <div className="flex items-center gap-2">
                 <Chip label={r.status} cls={RECON_CHIP[r.status] ?? EXC_CHIP} />
                 <span className="font-mono text-xs">{r.source}</span>
-                <span className="ml-auto text-[11px] text-zinc-400">
-                  {Math.round(r.confidence * 100)}%
-                </span>
+                {typeof r.confidence === "number" && (
+                  <span className="ml-auto text-[11px] text-zinc-400">
+                    {Math.round(r.confidence * 100)}%
+                  </span>
+                )}
               </div>
               {r.detail && (
                 <p className="mt-0.5 text-xs text-zinc-500">{r.detail}</p>

@@ -76,18 +76,21 @@ export function TaskThread({
     pollRef.current = null;
   }, []);
 
-  // poll while the run is moving; stop on terminal/awaiting states
+  // poll while the run is moving; stop on terminal/awaiting states.
+  // Kernel TaskStatus values are lowercase enum values.
   useEffect(() => {
     stopPoll();
     if (!run) return;
     const active = ![
-      "VERIFIED",
-      "FAILED",
-      "AWAITING_INPUT",
-      "REJECTED",
-      "CANCELLED",
+      "verified",
+      "failed",
+      "cancelled",
+      "rejected",
+      "awaiting_input",
+      "awaiting_approval",
+      "candidate_complete",
     ].includes(run.status);
-    if (run.status === "CANDIDATE" || !active) return;
+    if (!active) return;
     pollRef.current = setInterval(() => {
       void (async () => {
         try {
@@ -154,11 +157,15 @@ export function TaskThread({
   }
 
   const awaitingFiles =
-    run?.status === "AWAITING_INPUT" &&
+    run?.status === "awaiting_input" &&
     run.pending_questions.some((q) => q.kind === "missing_input");
   const askBack =
     run?.pending_questions.filter((q) => q.kind !== "missing_input") ?? [];
-  const showApproval = run?.status === "CANDIDATE";
+  // candidate_complete = attempt signaled done awaiting seal decision;
+  // awaiting_approval is the kernel's equivalent pre-approval state — both
+  // need the approval card or the run wedges with no control left.
+  const showApproval =
+    run?.status === "candidate_complete" || run?.status === "awaiting_approval";
 
   return (
     <div className="space-y-4">
@@ -235,9 +242,9 @@ export function TaskThread({
               </div>
               <div
                 className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                  run.status === "VERIFIED"
+                  run.status === "verified"
                     ? "bg-emerald-100 text-emerald-700"
-                    : run.status === "FAILED"
+                    : ["failed", "rejected", "cancelled"].includes(run.status)
                       ? "bg-red-100 text-red-700"
                       : "bg-blue-100 text-blue-700"
                 }`}
@@ -248,7 +255,9 @@ export function TaskThread({
             <p className="mt-1 text-sm">{run.step_label}</p>
             {run.counts && (
               <p className="mt-1 text-xs text-zinc-500">
-                {run.counts.invoices} hóa đơn · {run.counts.book_rows} dòng sổ
+                {run.outcome_type === "dossier_check"
+                  ? `${run.counts.docs ?? 0} chứng từ`
+                  : `${run.counts.invoices} hóa đơn · ${run.counts.book_rows} dòng sổ`}
               </p>
             )}
             {run.ingest_errors.length > 0 && (
