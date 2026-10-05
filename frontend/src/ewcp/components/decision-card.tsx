@@ -4,7 +4,7 @@
 // Covers the 3 ask-back kinds from spec 002 (missing_input handled by
 // FileSlotCard, not here) + final approve/reject gate.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { decide, type PendingQuestion, type RunView } from "@/ewcp/api";
 
@@ -29,11 +29,15 @@ export function DecisionCard({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const runRef = useRef(run);
 
   // an updated run means the situation moved on (e.g. another card's
   // questions got answered) — a rejection from before that no longer
   // describes the current state, so drop it instead of showing stale text
-  useEffect(() => setErr(null), [run]);
+  useEffect(() => {
+    runRef.current = run;
+    setErr(null);
+  }, [run]);
 
   const options =
     q.options.length > 0
@@ -55,7 +59,11 @@ export function DecisionCard({
       });
       onDone(next);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      // a rejection arriving after the run already advanced is stale —
+      // don't resurrect it beside the now-valid action
+      if (runRef.current === run) {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(null);
     }
