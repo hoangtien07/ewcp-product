@@ -2,13 +2,18 @@
 
 // StudioCard — per-outcome rich surface fed by GET /workruns/{id}/outcome.
 // invoice_recon → exception-first recon table; dossier_check → verdict +
-// checklist. Renders nothing until the run has deliverables (export stage
+// checklist; three_way_match → PO-line exception rows + doc-level flags.
+// Renders nothing until the run has deliverables (export stage
 // is what writes the outcome JSON the card reads).
 
 import { useEffect, useState } from "react";
 
 import { getOutcome, type RunView } from "@/ewcp/api";
-import { reconStatusLabel } from "@/ewcp/labels";
+import {
+  reconStatusLabel,
+  threeWayFlagLabel,
+  threeWayStatusLabel,
+} from "@/ewcp/labels";
 
 interface ReconRow {
   status: string;
@@ -36,6 +41,35 @@ interface DossierResult {
   documents: DossierDoc[];
 }
 
+// three_way_match/match/match.py MatchRow — quantities arrive as
+// preformatted strings or null (Decimal serialized via str()).
+interface ThreeWayRow {
+  status: string; // kernel MatchStatus value
+  severity: string; // info | warn | fail
+  source: string; // po:{po_no}:L{n} for PO-line rows; doc rows otherwise
+  sources: string[];
+  flags: string[];
+  po_no: string;
+  label: string; // sku/description
+  ordered_qty: string | null;
+  received_qty: string | null;
+  invoiced_qty: string | null;
+  ordered_price: string | null;
+  invoiced_amount: string | null;
+  currency: string;
+  detail: string;
+}
+
+interface ThreeWayResult {
+  verdict: string; // pass | warn | fail
+  params?: { buyer_mst?: string; ky?: string };
+  rows: ThreeWayRow[];
+}
+
+// a PO-line row is identified by its source shape — same classifier the
+// kernel's own line_conservation validator uses (spec.py)
+const PO_LINE_RE = /^po:.+:L\d+$/;
+
 const RECON_CHIP: Record<string, string> = {
   MATCHED:
     "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
@@ -51,6 +85,28 @@ const ROW_ICON: Record<string, string> = {
   pass: "text-emerald-600",
   warn: "text-amber-600",
   fail: "text-red-600",
+};
+
+// three_way severity → chip color (fail/warn rows are exceptions)
+const TW_CHIP: Record<string, string> = {
+  fail: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  warn: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  info: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+};
+
+const TW_VERDICT: Record<string, { label: string; cls: string }> = {
+  pass: {
+    label: "Đạt",
+    cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  },
+  warn: {
+    label: "Có cảnh báo",
+    cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  },
+  fail: {
+    label: "Có lỗi — cần xử lý",
+    cls: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  },
 };
 
 function Chip({ label, cls }: { label: string; cls: string }) {
@@ -182,6 +238,130 @@ function DossierStudio({ result }: { result: DossierResult }) {
   );
 }
 
+function qty(v: string | null): string {
+  return v ?? "—";
+}
+
+function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
+  const rows = result.rows;
+  const matched = rows.filter((r) => r.status === "MATCHED");
+  const exceptions = rows.filter((r) => r.status !== "MATCHED");
+  const lineRows = exceptions.filter((r) => PO_LINE_RE.test(r.source));
+  const docRows = exceptions.filter((r) => !PO_LINE_RE.test(r.source));
+  const verdict = TW_VERDICT[result.verdict] ?? {
+    label: result.verdict,
+    cls: EXC_CHIP,
+  };
+  // bound run context worth surfacing: reconciliation period + the buyer
+  // MST the match was checked against (both optional on the wire)
+  const context = [
+    result.params?.ky ? `Kỳ ${result.params.ky}` : "",
+    result.params?.buyer_mst ? `MST ${result.params.buyer_mst}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+          Đối chiếu 3 chiều
+        </span>
+        <Chip label={verdict.label} cls={verdict.cls} />
+      </div>
+      <div className="flex items-center justify-between text-xs text-zinc-500">
+        <span>
+          {matched.length}/{rows.length} dòng khớp · {exceptions.length}{" "}
+          ngoại lệ
+        </span>
+        {context && <span className="font-mono">{context}</span>}
+      </div>
+      {exceptions.length === 0 ? (
+        <p className="text-sm text-emerald-700 dark:text-emerald-300">
+          Mọi dòng khớp đủ 3 chiều — không có ngoại lệ.
+        </p>
+      ) : (
+        <>
+          {lineRows.length > 0 && (
+            <ul className="divide-y divide-zinc-200 text-sm dark:divide-zinc-700">
+              {lineRows.map((r, i) => (
+                <li key={i} className="py-2">
+                  <div className="flex items-center gap-2">
+                    <Chip
+                      label={threeWayStatusLabel(r.status)}
+                      cls={TW_CHIP[r.severity] ?? EXC_CHIP}
+                    />
+                    <span className="font-mono text-xs font-semibold">
+                      {r.po_no || r.source}
+                    </span>
+                    {r.label && (
+                      <span className="truncate text-xs text-zinc-500">
+                        {r.label}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs text-zinc-500">
+                    đặt {qty(r.ordered_qty)} · nhận{" "}
+                    {qty(r.received_qty)} · HĐ {qty(r.invoiced_qty)}
+                    {r.invoiced_amount &&
+                      ` — ${r.invoiced_amount}` +
+                        (r.currency ? ` ${r.currency}` : "")}
+                  </p>
+                  {r.flags.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {r.flags.map((f) => (
+                        <span
+                          key={f}
+                          className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                        >
+                          {threeWayFlagLabel(f)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {r.detail && (
+                    <p className="mt-0.5 text-xs text-zinc-500">{r.detail}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {docRows.length > 0 && (
+            <div
+              className={
+                lineRows.length > 0
+                  ? "border-t border-zinc-200 pt-2 dark:border-zinc-700"
+                  : ""
+              }
+            >
+              <p className="mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+                Chứng từ
+              </p>
+              <ul className="divide-y divide-zinc-200 text-sm dark:divide-zinc-700">
+                {docRows.map((r, i) => (
+                  <li key={i} className="py-2">
+                    <div className="flex items-center gap-2">
+                      <Chip
+                        label={threeWayStatusLabel(r.status)}
+                        cls={TW_CHIP[r.severity] ?? EXC_CHIP}
+                      />
+                      <span className="font-mono text-xs">{r.source}</span>
+                    </div>
+                    {r.detail && (
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        {r.detail}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export function StudioCard({ run, apiKey }: { run: RunView; apiKey: string }) {
   const [result, setResult] = useState<unknown>(null);
   const [failed, setFailed] = useState(false);
@@ -218,6 +398,11 @@ export function StudioCard({ run, apiKey }: { run: RunView; apiKey: string }) {
       typeof result === "object" &&
       result !== null ? (
       <DossierStudio result={result as DossierResult} />
+    ) : run.outcome_type === "three_way_match" &&
+      typeof result === "object" &&
+      result !== null &&
+      Array.isArray((result as ThreeWayResult).rows) ? (
+      <ThreeWayStudio result={result as ThreeWayResult} />
     ) : null;
 
   if (!body) return null;

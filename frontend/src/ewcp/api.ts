@@ -314,7 +314,14 @@ export type DemoFixtureName =
   | "books"
   | "books_corrupt"
   | "dossier"
-  | "dossier_sea";
+  | "dossier_sea"
+  | "three_way_po"
+  | "three_way_receipts"
+  | "three_way_invoices"
+  | "three_way_po_clean"
+  | "three_way_receipts_clean"
+  | "three_way_invoices_clean"
+  | "three_way_po_corrupt";
 
 export async function fetchDemoFixture(
   name: DemoFixtureName,
