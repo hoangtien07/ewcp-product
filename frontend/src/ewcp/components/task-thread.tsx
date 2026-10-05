@@ -117,7 +117,13 @@ export function TaskThread({
     setErr(null);
     setClarify(null);
     try {
-      const fp = [intent, zip?.name, books?.name, dossier?.name].join("|");
+      // fingerprint covers name+size+mtime so a re-picked file with the
+      // same name but different content counts as a new submission
+      const fp = [intent, zip, books, dossier]
+        .map((x) =>
+          x instanceof File ? `${x.name}:${x.size}:${x.lastModified}` : x,
+        )
+        .join("|");
       if (idemRef.current?.fp !== fp) {
         idemRef.current = { fp, key: crypto.randomUUID() };
       }
@@ -174,6 +180,10 @@ export function TaskThread({
     try {
       if (kind === "dossier") {
         setDossier(await fetchDemoFixture("dossier"));
+        // a sample is the whole draft — stale picks from a previous
+        // workflow must not ride along into this one
+        setZip(null);
+        setBooks(null);
         if (!intent.trim())
           setIntent("Kiểm tra hồ sơ chứng từ lô hàng gần nhất");
       } else {
@@ -183,6 +193,7 @@ export function TaskThread({
           ),
         );
         setBooks(await fetchDemoFixture("books"));
+        setDossier(null);
         if (!intent.trim())
           setIntent("Đối soát hóa đơn kỳ 09/2025");
       }

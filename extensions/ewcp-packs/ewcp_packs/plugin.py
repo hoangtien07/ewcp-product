@@ -23,8 +23,14 @@ _FORWARDED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"
 _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
 # Request headers allowlisted into the kernel: identity is carried only by
 # x-ewcp-api-key (the kernel binds key<->tenant itself); nothing else a client
-# sends may reach kernel authorization.
-_ALLOWED_HEADERS = {"content-type", "accept", "x-ewcp-api-key"}
+# sends may reach kernel authorization. idempotency-key is a non-identity
+# request-control header the kernel honors on POST /tasks.
+_ALLOWED_HEADERS = {
+    "content-type",
+    "accept",
+    "x-ewcp-api-key",
+    "idempotency-key",
+}
 # Response headers that must not pass through: httpx already decoded the body,
 # and content-length no longer matches the decoded payload.
 _RESP_STRIP_HEADERS = _HOP_HEADERS | {"content-encoding"}
