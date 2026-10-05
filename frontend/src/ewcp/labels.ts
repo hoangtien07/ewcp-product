@@ -32,6 +32,15 @@ export const OUTCOME_LABEL: Record<string, string> = {
   dossier_check: "Kiểm tra chứng từ",
 };
 
+// RunView.counts keys → Vietnamese unit names. The wire carries whatever
+// keys the pack's spec.summarize emits — the pane formats every numeric
+// entry generically instead of switching on outcome_type.
+export const COUNT_LABEL: Record<string, string> = {
+  invoices: "hóa đơn",
+  book_rows: "dòng sổ",
+  docs: "chứng từ",
+};
+
 // invoice_recon row statuses (kernel ReconStatus enum) shown as chips in
 // the exception grid. Kernel ships no grid vocabulary — mapped here.
 export const RECON_STATUS_LABEL: Record<string, string> = {
@@ -58,4 +67,13 @@ export function outcomeLabel(outcomeType: string): string {
 
 export function reconStatusLabel(status: string): string {
   return RECON_STATUS_LABEL[status] ?? status;
+}
+
+export function formatCounts(
+  counts: Record<string, number | undefined>,
+): string {
+  return Object.entries(counts)
+    .filter((kv): kv is [string, number] => typeof kv[1] === "number")
+    .map(([k, v]) => `${v} ${COUNT_LABEL[k] ?? k}`)
+    .join(" · ");
 }

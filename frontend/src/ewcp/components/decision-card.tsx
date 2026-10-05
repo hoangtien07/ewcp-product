@@ -3,6 +3,10 @@
 // DecisionCard — renders a pending HumanDecision and posts the answer.
 // Covers the 3 ask-back kinds from spec 002 (missing_input handled by
 // FileSlotCard, not here) + final approve/reject gate.
+//
+// Answer contract: options_v2 options post their stable `id` (the kernel
+// dispatch key); the legacy `options` label path stays as the fallback
+// for kernels before the slug contract.
 
 import { useEffect, useRef, useState } from "react";
 
@@ -44,12 +48,17 @@ export function DecisionCard({
     setErr(null);
   }, [run]);
 
-  const options =
-    q.options.length > 0
-      ? q.options
-      : q.kind === "approval"
-        ? ["approve", "reject", "request_changes"]
-        : ["approve", "reject"];
+  // options_v2 = slug contract (post .id); bare `options` labels are the
+  // legacy wire form — treated as id == label so old kernels still work
+  const options: { id: string; label: string }[] =
+    q.options_v2 && q.options_v2.length > 0
+      ? q.options_v2
+      : (q.options.length > 0
+          ? q.options
+          : q.kind === "approval"
+            ? ["approve", "reject", "request_changes"]
+            : ["approve", "reject"]
+        ).map((label) => ({ id: label, label }));
 
   async function submit(answer: string) {
     setBusy(answer);
@@ -83,18 +92,18 @@ export function DecisionCard({
       <div className="mt-3 flex flex-wrap gap-2">
         {options.map((opt) => (
           <button
-            key={opt}
+            key={opt.id}
             disabled={busy !== null || disabledHint !== undefined}
-            onClick={() => submit(opt)}
+            onClick={() => void submit(opt.id)}
             className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
-              opt === "approve"
+              opt.id === "approve"
                 ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                : opt === "reject"
+                : opt.id === "reject"
                   ? "bg-red-600 text-white hover:bg-red-700"
                   : "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
             }`}
           >
-            {busy === opt ? "…" : decisionLabel(opt)}
+            {busy === opt.id ? "…" : decisionLabel(opt.label)}
           </button>
         ))}
       </div>

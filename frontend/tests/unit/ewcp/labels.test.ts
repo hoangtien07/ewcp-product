@@ -3,6 +3,7 @@ import { describe, expect, test } from "@rstest/core";
 import {
   DECISION_LABEL,
   decisionLabel,
+  formatCounts,
   outcomeLabel,
   RECON_STATUS_LABEL,
   reconStatusLabel,
@@ -60,6 +61,17 @@ describe("ewcp labels — kernel enum → Vietnamese", () => {
       expect(RECON_STATUS_LABEL[s], `missing label for ${s}`).toBeTruthy();
     }
     expect(reconStatusLabel("AMOUNT_MISMATCH")).toBe("Lệch số tiền");
+  });
+
+  test("formatCounts renders pack summarize() keys generically", () => {
+    // keys come from the pack's spec.summarize — formatting must not
+    // switch on outcome_type
+    expect(formatCounts({ invoices: 3, book_rows: 12 })).toBe(
+      "3 hóa đơn · 12 dòng sổ",
+    );
+    expect(formatCounts({ docs: 7 })).toBe("7 chứng từ");
+    expect(formatCounts({ future_key: 2 })).toBe("2 future_key");
+    expect(formatCounts({})).toBe("");
   });
 
   test("unknown values fall through untouched (kernel VN options pass through)", () => {

@@ -5,7 +5,9 @@ import {
   decide,
   EwcpError,
   getOutcome,
+  listOutcomes,
   listRuns,
+  supplyInputs,
   verifyArtifacts,
 } from "@/ewcp/api";
 
@@ -36,7 +38,7 @@ describe("ewcp api client", () => {
       intent: "đối soát",
       tenant: "demo",
       apiKey: "k1",
-      invoicesZip: zip,
+      files: { invoices_zip: zip },
     });
     expect(res.status).toBe("clarify");
     const call = calls.at(0);
@@ -48,6 +50,64 @@ describe("ewcp api client", () => {
     expect(
       (call?.init?.headers as Record<string, string>)["x-ewcp-api-key"],
     ).toBe("k1");
+  });
+
+  test("createTask posts spec-declared context keys + input fields generically", async () => {
+    const calls = mockFetch(200, { workrun_id: "w" });
+    const f = new File(["x"], "any.dat");
+    await createTask({
+      intent: "kiểm tra chứng từ",
+      tenant: "demo",
+      apiKey: "",
+      files: { some_future_slot: f, empty_slot: null },
+      context: { ky: "2025-09", mst_doanh_nghiep: "0101234567" },
+    });
+    const fd = calls.at(0)?.init?.body as FormData;
+    // field names pass through verbatim — the registry owns the schema
+    expect(fd.get("some_future_slot")).toBeTruthy();
+    expect(fd.get("empty_slot")).toBeNull();
+    expect(fd.get("ky")).toBe("2025-09");
+    expect(fd.get("mst_doanh_nghiep")).toBe("0101234567");
+  });
+
+  test("supplyInputs posts files under their spec field names", async () => {
+    const calls = mockFetch(200, { workrun_id: "w9" });
+    const f = new File(["x"], "dossier.zip");
+    await supplyInputs("w9", {
+      tenant: "demo",
+      apiKey: "",
+      files: { dossier_zip: f },
+    });
+    const call = calls.at(0);
+    expect(call?.url).toBe("/api/ewcp/tasks/w9/inputs");
+    const fd = call?.init?.body as FormData;
+    expect(fd.get("dossier_zip")).toBeTruthy();
+    expect(fd.get("tenant_id")).toBe("demo");
+  });
+
+  test("listOutcomes fetches the pack registry with the api key", async () => {
+    const calls = mockFetch(200, [
+      {
+        outcome_type: "invoice_recon",
+        description: "d",
+        required_checks: ["totals_match"],
+        requires_inputs: [
+          {
+            name: "invoices_zip",
+            accept: ".zip",
+            label_vn: "Zip hóa đơn",
+            required: true,
+          },
+        ],
+      },
+    ]);
+    const specs = await listOutcomes({ apiKey: "k3" });
+    expect(specs[0]?.requires_inputs[0]?.name).toBe("invoices_zip");
+    const call = calls.at(0);
+    expect(call?.url).toBe("/api/ewcp/outcomes");
+    expect(
+      (call?.init?.headers as Record<string, string>)["x-ewcp-api-key"],
+    ).toBe("k3");
   });
 
   test("decide posts JSON decision with decision_id", async () => {

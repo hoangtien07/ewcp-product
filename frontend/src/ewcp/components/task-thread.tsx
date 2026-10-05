@@ -15,7 +15,9 @@ import {
   downloadDeliverable,
   fetchDemoFixture,
   getRun,
+  listOutcomes,
   supplyInputs,
+  type OutcomeSpecView,
   type RunView,
 } from "@/ewcp/api";
 import {
@@ -23,7 +25,14 @@ import {
   handoffToGeneralLane,
   type ExploratoryHandoff,
 } from "@/ewcp/exploratory";
-import { statusLabel } from "@/ewcp/labels";
+import { formatCounts, outcomeLabel, statusLabel } from "@/ewcp/labels";
+import {
+  bindPresets,
+  FALLBACK_SPECS,
+  inputsFor,
+  isZipInput,
+  type BoundPreset,
+} from "@/ewcp/registry";
 
 import { DecisionCard } from "./decision-card";
 import { ManifestCard } from "./manifest-card";
@@ -37,10 +46,12 @@ interface Creds {
 
 function FileSlot({
   label,
+  accept,
   file,
   onPick,
 }: {
   label: string;
+  accept?: string;
   file: File | null;
   onPick: (f: File | null) => void;
 }) {
@@ -52,6 +63,7 @@ function FileSlot({
       </span>
       <input
         type="file"
+        accept={accept}
         className="hidden"
         onChange={(e) => onPick(e.target.files?.[0] ?? null)}
       />
@@ -72,9 +84,12 @@ export function TaskThread({
 }) {
   const router = useRouter();
   const [intent, setIntent] = useState("");
-  const [zip, setZip] = useState<File | null>(null);
-  const [books, setBooks] = useState<File | null>(null);
-  const [dossier, setDossier] = useState<File | null>(null);
+  // file slots keyed by the spec's declared multipart field names
+  // (requires_inputs[].name) — the registry decides which exist
+  const [files, setFiles] = useState<Record<string, File | null>>({});
+  // pack registry from GET /outcomes — FALLBACK_SPECS keeps the pane
+  // working against kernels that predate the registry endpoint
+  const [specs, setSpecs] = useState<OutcomeSpecView[]>(FALLBACK_SPECS);
   const [clarify, setClarify] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -120,6 +135,46 @@ export function TaskThread({
 
   useEffect(() => stopPoll, [stopPoll]);
 
+  // fetch the registry once per api-key change — in keyed deployments a
+  // 401 means the key isn't right yet, and re-running on change retries
+  // it; any failure keeps the fallback copy (pane stays usable)
+  useEffect(() => {
+    let dead = false;
+    void listOutcomes({ apiKey: creds.apiKey })
+      .then((s) => {
+        if (!dead && Array.isArray(s) && s.length > 0) setSpecs(s);
+      })
+      .catch(() => {
+        /* pre-registry kernel or offline — stay on FALLBACK_SPECS */
+      });
+    return () => {
+      dead = true;
+    };
+  }, [creds.apiKey]);
+
+  // a selected run narrows the slots to its own outcome's inputs; no run
+  // means intake can be any pack, so the union of declared slots shows
+  const slots = inputsFor(specs, run?.outcome_type);
+  const presets = bindPresets(specs);
+  // spec-driven routing hint: first preset's sample intent, else the
+  // first spec's description — never a hardcoded pack example
+  const intentHint = presets[0]?.intent ?? specs[0]?.description;
+
+  function pickFile(name: string, f: File | null) {
+    setFiles((cur) => {
+      const next = { ...cur, [name]: f };
+      const input = slots.find((s) => s.name === name);
+      // kernel accepts at most one zip per request — picking a zip slot
+      // clears the other zip slots (they belong to different packs)
+      if (f && input && isZipInput(input)) {
+        for (const s of slots) {
+          if (s.name !== name && isZipInput(s)) next[s.name] = null;
+        }
+      }
+      return next;
+    });
+  }
+
   async function submit() {
     if (!intent.trim() || busy) return;
     setBusy(true);
@@ -128,7 +183,7 @@ export function TaskThread({
     try {
       // fingerprint covers name+size+mtime so a re-picked file with the
       // same name but different content counts as a new submission
-      const fp = [intent, zip, books, dossier]
+      const fp = [intent, ...slots.map((s) => files[s.name])]
         .map((x) =>
           x instanceof File ? `${x.name}:${x.size}:${x.lastModified}` : x,
         )
@@ -140,9 +195,7 @@ export function TaskThread({
         intent,
         tenant: creds.tenant,
         apiKey: creds.apiKey,
-        invoicesZip: zip,
-        books,
-        dossierZip: dossier,
+        files,
         idempotencyKey: idemRef.current.key,
       });
       if (res.status === "clarify") {
@@ -188,14 +241,10 @@ export function TaskThread({
         await supplyInputs(run.workrun_id, {
           tenant: creds.tenant,
           apiKey: creds.apiKey,
-          invoicesZip: zip,
-          books,
-          dossierZip: dossier,
+          files,
         }),
       );
-      setZip(null);
-      setBooks(null);
-      setDossier(null);
+      setFiles({});
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -203,30 +252,22 @@ export function TaskThread({
     }
   }
 
-  async function loadFixture(kind: "recon" | "recon_corrupt" | "dossier") {
+  async function loadPreset(preset: BoundPreset) {
     if (busy) return;
     setBusy(true);
     setErr(null);
     try {
-      if (kind === "dossier") {
-        setDossier(await fetchDemoFixture("dossier"));
-        // a sample is the whole draft — stale picks from a previous
-        // workflow must not ride along into this one
-        setZip(null);
-        setBooks(null);
-        if (!intent.trim())
-          setIntent("Kiểm tra hồ sơ chứng từ lô hàng gần nhất");
-      } else {
-        setZip(
-          await fetchDemoFixture(
-            kind === "recon_corrupt" ? "invoices_corrupt" : "invoices",
-          ),
-        );
-        setBooks(await fetchDemoFixture("books"));
-        setDossier(null);
-        if (!intent.trim())
-          setIntent("Đối soát hóa đơn kỳ 09/2025");
+      // a preset is the whole draft — it replaces the file map wholesale
+      // so stale picks from a previous workflow never ride along
+      const declared = new Set(preset.inputs);
+      const next: Record<string, File | null> = {};
+      for (const [name, fixture] of Object.entries(preset.fixtures)) {
+        if (declared.has(name)) {
+          next[name] = await fetchDemoFixture(fixture);
+        }
       }
+      setFiles(next);
+      if (!intent.trim()) setIntent(preset.intent);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -256,43 +297,54 @@ export function TaskThread({
           value={intent}
           onChange={(e) => setIntent(e.target.value)}
           rows={2}
-          placeholder="Yêu cầu nghiệp vụ (tiếng Việt) — vd: đối soát hóa đơn kỳ 09/2025"
+          placeholder={`Yêu cầu nghiệp vụ (tiếng Việt) — vd: ${intentHint ?? "đối soát hóa đơn"}`}
           className="w-full resize-y rounded-md border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-600"
         />
-        <div className="mt-2 grid gap-2 sm:grid-cols-3">
-          <FileSlot label="Zip hóa đơn (XML/PDF)" file={zip} onPick={setZip} />
-          <FileSlot label="Sổ kế toán (CSV)" file={books} onPick={setBooks} />
-          <FileSlot
-            label="Zip hồ sơ chứng từ (dossier)"
-            file={dossier}
-            onPick={setDossier}
-          />
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-zinc-500">Dữ liệu mẫu:</span>
-          {(
-            [
-              ["recon", "đối soát"],
-              ["recon_corrupt", "đối soát (file lỗi)"],
-              ["dossier", "hồ sơ chứng từ"],
-            ] as const
-          ).map(([kind, label]) => (
-            <button
-              key={kind}
-              type="button"
-              disabled={busy}
-              onClick={() => void loadFixture(kind)}
-              className="rounded border border-zinc-300 px-2 py-0.5 text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        {/* router hint — what the registered packs understand */}
+        <p className="mt-1 text-xs text-zinc-400">
+          Router nhận:{" "}
+          {specs.map((s) => (
+            <span
+              key={s.outcome_type}
+              title={s.description}
+              className="mr-2 inline-block"
             >
-              {label}
-            </button>
+              {outcomeLabel(s.outcome_type)}
+            </span>
+          ))}
+        </p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          {slots.map((s) => (
+            <FileSlot
+              key={s.name}
+              label={s.required ? s.label_vn : `${s.label_vn} (tuỳ chọn)`}
+              accept={s.accept}
+              file={files[s.name] ?? null}
+              onPick={(f) => pickFile(s.name, f)}
+            />
           ))}
         </div>
+        {presets.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-zinc-500">Dữ liệu mẫu:</span>
+            {presets.map((p) => (
+              <button
+                key={`${p.outcomeType}:${p.label}`}
+                type="button"
+                disabled={busy}
+                onClick={() => void loadPreset(p)}
+                className="rounded border border-zinc-300 px-2 py-0.5 text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="mt-3 flex items-center gap-3">
           {awaitingFiles ? (
             <button
               onClick={sendInputs}
-              disabled={busy || (!zip && !books && !dossier)}
+              disabled={busy || !Object.values(files).some(Boolean)}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {busy ? "Đang gửi…" : "Gửi file bổ sung"}
@@ -362,9 +414,7 @@ export function TaskThread({
             <p className="mt-1 text-sm">{run.step_label}</p>
             {run.counts && (
               <p className="mt-1 text-xs text-zinc-500">
-                {run.outcome_type === "dossier_check"
-                  ? `${run.counts.docs ?? 0} chứng từ`
-                  : `${run.counts.invoices} hóa đơn · ${run.counts.book_rows} dòng sổ`}
+                {formatCounts(run.counts)}
               </p>
             )}
             {run.ingest_errors.length > 0 && (
