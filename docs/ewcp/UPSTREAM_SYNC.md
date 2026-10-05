@@ -28,7 +28,9 @@ this doc records *how* a new tag gets adopted.
      is driven manually in `EwcpKernelService.start/stop`)
    - CSRF / double-submit rules on POSTs (pane sends `x-csrf-token`)
    - Anything under `frontend/src/` we do NOT use stays free to change.
-3. Merge the tag into a branch off `origin/ewcp/main`:
+3. Merge the tag into a branch off `origin/ewcp/main` — our integration
+   branch, which already contains all EWCP work (extension, pane, docs);
+   it is NOT upstream `main`:
    `git checkout -b devin/<ts>-sync-v2.x.y origin/ewcp/main`
    `git merge v2.x.y` (merge, not rebase — keeps upstream history legible
    for the next sync).
@@ -41,6 +43,11 @@ this doc records *how* a new tag gets adopted.
 5. **Contract gate before merge** (all must pass):
    - `cd backend && uv sync && make test` — extension loads,
      `kernel_loaded:true` on `/health`-equivalent probe.
+     Note: `uv sync` prunes packages not declared in backend deps, and
+     the kernel is installed editable from the sibling repo — reinstall
+     it right after (`uv pip install -e ../../enterprise-work-control-plane`
+     or rely on the PYTHONPATH mount used in dev) before checking
+     `kernel_loaded`.
    - `cd frontend && pnpm check && pnpm test`.
    - Boot the full stack (`make dev` or gateway+frontend) and drive one
      governed golden path: intent → ask-back → approve → seal →
