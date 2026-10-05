@@ -172,6 +172,12 @@ export function StudioCard({ run, apiKey }: { run: RunView; apiKey: string }) {
   const [result, setResult] = useState<unknown>(null);
   const [failed, setFailed] = useState(false);
 
+  // identity of the export set — a rerun ("sửa file rồi chạy lại") replaces
+  // deliverables possibly at the same count, so length alone misses it
+  const deliverableKey = run.deliverables
+    .map((d) => `${d.deliverable_id}:${d.sha256}`)
+    .join(",");
+
   useEffect(() => {
     setResult(null);
     setFailed(false);
@@ -187,10 +193,7 @@ export function StudioCard({ run, apiKey }: { run: RunView; apiKey: string }) {
     return () => {
       alive = false;
     };
-    // refetch only when the run's exports may have changed — a rerun from
-    // the "sửa file rồi chạy lại" path keeps the same workrun_id but writes
-    // fresh deliverables, which is why length is in the dep list.
-  }, [run.workrun_id, run.deliverables.length, apiKey]);
+  }, [run.workrun_id, deliverableKey, apiKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (run.deliverables.length === 0 || failed || !result) return null;
 

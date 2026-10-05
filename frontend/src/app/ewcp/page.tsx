@@ -4,9 +4,9 @@
 // zero upstream file edits. API calls ride the existing /api/:path* rewrite →
 // Gateway /api/ewcp/* → in-process kernel.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { getRun, type RunView } from "@/ewcp/api";
+import { EwcpError, getRun, type RunView } from "@/ewcp/api";
 import { TaskList } from "@/ewcp/components/task-list";
 import { TaskThread } from "@/ewcp/components/task-thread";
 import { UnverifiedBadge } from "@/ewcp/components/unverified-badge";
@@ -42,32 +42,49 @@ export default function EwcpPage() {
   }, []);
 
   // restore the last open run on mount — a pending ask-back or approval
-  // must stay reachable across reloads
+  // must stay reachable across reloads. A 401 with no key entered yet keeps
+  // the saved id: the effect re-runs once the user types their key.
+  const restoredRef = useRef(false);
   useEffect(() => {
+    if (restoredRef.current) return;
     let id: string | null = null;
     try {
       id = sessionStorage.getItem(LAST_RUN_KEY);
     } catch {
       /* private mode */
     }
-    if (!id) return;
-    void getRun(id, { apiKey: "" })
-      .then((r) => updateRun(r))
-      .catch(() => {
+    if (!id) {
+      restoredRef.current = true;
+      return;
+    }
+    void getRun(id, { apiKey: creds.apiKey })
+      .then((r) => {
+        restoredRef.current = true;
+        updateRun(r);
+      })
+      .catch((e) => {
+        if (e instanceof EwcpError && e.status === 401 && !creds.apiKey) {
+          return; // wait for the user to enter their key — keep the id
+        }
+        restoredRef.current = true;
         try {
           sessionStorage.removeItem(LAST_RUN_KEY);
         } catch {
           /* ignore */
         }
       });
-    // mount-only restore — history clicks go through select() instead
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [creds.apiKey, updateRun]);
 
+  // only the latest selection wins — a slower earlier fetch must not reopen
+  // the wrong run on top of what the user picked next
+  const selectSeq = useRef(0);
   const select = useCallback(
     (workrunId: string) => {
+      const seq = ++selectSeq.current;
       void getRun(workrunId, { apiKey: creds.apiKey })
-        .then((r) => updateRun(r))
+        .then((r) => {
+          if (seq === selectSeq.current) updateRun(r);
+        })
         .catch(() => {
           /* stale row — leave current view */
         });
@@ -170,7 +187,14 @@ export default function EwcpPage() {
           </label>
         </div>
 
-        <TaskThread creds={creds} run={run} onRun={updateRun} />
+        {/* key remounts on run switch — file slots/intent belong to the
+            request that created them, never carry into another run */}
+        <TaskThread
+          key={run?.workrun_id ?? "new"}
+          creds={creds}
+          run={run}
+          onRun={updateRun}
+        />
 
         {/* exploratory-lane demo: UNVERIFIED chrome is dominant by rule */}
         <section className="space-y-2">

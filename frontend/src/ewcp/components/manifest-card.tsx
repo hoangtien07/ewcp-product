@@ -26,10 +26,21 @@ export function ManifestCard({
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
+    // never show a previous run's manifest under this run's seal
+    setManifest(null);
+    setErr(null);
     if (run.status !== "VERIFIED") return;
+    let alive = true;
     getManifest(run.workrun_id, creds)
-      .then(setManifest)
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+      .then((m) => {
+        if (alive) setManifest(m);
+      })
+      .catch((e) => {
+        if (alive) setErr(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      alive = false;
+    };
   }, [run.workrun_id, run.status, creds.apiKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (run.status !== "VERIFIED") return null;
