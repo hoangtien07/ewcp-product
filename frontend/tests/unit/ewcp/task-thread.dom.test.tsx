@@ -154,13 +154,20 @@ describe("TaskThread spec-driven intake", () => {
     );
     render(<TaskThread creds={creds} run={null} onRun={rs.fn()} />);
 
-    // spec-declared slots appear; hardcoded pack slots disappear
-    expect(await screen.findByText("Zip tuỳ chỉnh")).toBeTruthy();
-    expect(screen.getByText("File phụ (tuỳ chọn)")).toBeTruthy();
+    // spec-declared slots appear (slot + gallery card each render the
+    // label); hardcoded pack slots disappear
+    expect(
+      (await screen.findAllByText("Zip tuỳ chỉnh")).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("File phụ (tuỳ chọn)").length,
+    ).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText(/Sổ kế toán/)).toBeNull();
-    // router hint names the registered pack; unmapped outcome_type passes
-    // through verbatim
-    expect(screen.getByText("new_pack")).toBeTruthy();
+    // router hint + gallery card both name the registered pack; an
+    // unmapped outcome_type passes through verbatim
+    expect(screen.getAllByText("new_pack").length).toBeGreaterThanOrEqual(
+      2,
+    );
     // no DEMO_PRESETS entry for this pack -> no sample-data row at all
     expect(screen.queryByText("Dữ liệu mẫu:")).toBeNull();
   });
@@ -174,14 +181,18 @@ describe("TaskThread spec-driven intake", () => {
     );
     render(<TaskThread creds={creds} run={null} onRun={rs.fn()} />);
     // FALLBACK_SPECS: dossier_zip slot + recon slots + preset buttons
+    // (slot labels now render in the gallery card too)
     expect(
-      await screen.findByText("Zip chứa chứng từ lô hàng (txt/pdf/xml)"),
-    ).toBeTruthy();
+      (await screen.findAllByText("Zip chứa chứng từ lô hàng (txt/pdf/xml)"))
+        .length,
+    ).toBeGreaterThanOrEqual(1);
     expect(
-      screen.getByText("Sổ kế toán kỳ này (csv/xlsx export)"),
-    ).toBeTruthy();
-    expect(screen.getByText("đối soát")).toBeTruthy();
-    expect(screen.getByText("hồ sơ chứng từ")).toBeTruthy();
+      screen.getAllByText("Sổ kế toán kỳ này (csv/xlsx export)").length,
+    ).toBeGreaterThanOrEqual(1);
+    // preset labels now render twice — the intake row and the card's
+    // own sample-data buttons
+    expect(screen.getAllByText("đối soát")).toHaveLength(2);
+    expect(screen.getAllByText("hồ sơ chứng từ")).toHaveLength(2);
   });
 
   test("an active run narrows slots to its own outcome's spec", async () => {
@@ -198,6 +209,46 @@ describe("TaskThread spec-driven intake", () => {
       screen.getByText("Sổ kế toán kỳ này (csv/xlsx export)"),
     ).toBeTruthy();
     expect(screen.queryByText(/chứng từ lô hàng/)).toBeNull();
+  });
+
+  test("pack gallery renders under intake on a fresh request", async () => {
+    rs.stubGlobal(
+      "fetch",
+      rs.fn(async () => jsonResponse({})), // registry stays on fallback
+    );
+    render(<TaskThread creds={creds} run={null} onRun={rs.fn()} />);
+    // gallery section present; cards from the spec copy (the labels also
+    // appear in the router hint, so count the Governed badges)
+    expect(
+      await screen.findByText("Gói nghiệp vụ governed"),
+    ).toBeTruthy();
+    expect(
+      screen.getAllByText("Governed — niêm phong kiểm chứng"),
+    ).toHaveLength(2);
+    expect(screen.getAllByText("Sắp có — chưa mở")).toHaveLength(1);
+    // the fallback notice stays up while the registry is unread
+    expect(screen.getByText(/Spec tĩnh/)).toBeTruthy();
+  });
+
+  test("gallery hidden while a run is open; chips fill the intent box", async () => {
+    rs.stubGlobal(
+      "fetch",
+      rs.fn(async () => jsonResponse({})),
+    );
+    const { unmount } = render(
+      <TaskThread creds={creds} run={baseRun} onRun={rs.fn()} />,
+    );
+    await screen.findByText("Thiếu đầu vào bắt buộc.");
+    expect(screen.queryByText("Gói nghiệp vụ governed")).toBeNull();
+    unmount();
+
+    render(<TaskThread creds={creds} run={null} onRun={rs.fn()} />);
+    const chip = await screen.findByText("Đối soát hóa đơn kỳ 09/2025");
+    fireEvent.click(chip);
+    const box = screen.getByPlaceholderText<HTMLTextAreaElement>(
+      /Yêu cầu nghiệp vụ/,
+    );
+    expect(box.value).toBe("Đối soát hóa đơn kỳ 09/2025");
   });
 
   test("picking a zip slot clears the other zip slot (one zip per request)", async () => {

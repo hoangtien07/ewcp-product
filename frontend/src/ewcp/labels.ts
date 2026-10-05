@@ -26,11 +26,14 @@ export const DECISION_LABEL: Record<string, string> = {
   request_changes: "Yêu cầu sửa",
 };
 
-// RunView.outcome_type → Vietnamese surface name (history rail).
+// RunView.outcome_type → Vietnamese surface name (history rail, gallery).
+// bank_recon is the announced roadmap pack — it renders as a "Sắp có"
+// card until the kernel registers it.
 export const OUTCOME_LABEL: Record<string, string> = {
   invoice_recon: "Đối soát hóa đơn",
   dossier_check: "Kiểm tra chứng từ",
   three_way_match: "Đối chiếu 3 chiều",
+  bank_recon: "Đối chiếu sao kê ngân hàng",
 };
 
 // RunView.counts keys → Vietnamese unit names. The wire carries whatever
