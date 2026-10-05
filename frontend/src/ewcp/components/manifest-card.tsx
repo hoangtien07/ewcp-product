@@ -45,16 +45,24 @@ export function ManifestCard({
 
   if (run.status !== "verified") return null;
 
-  const checks = (manifest?.checks as ManifestCheck[] | undefined) ?? [];
+  // never show the seal before the manifest actually loaded — a verified
+  // badge with a placeholder hash presents unavailable evidence as sealed
+  if (err) {
+    return <p className="text-xs text-red-600">{err}</p>;
+  }
+  if (!manifest) {
+    return <p className="text-xs text-zinc-500">Đang tải manifest…</p>;
+  }
+
+  const checks = (manifest.checks as ManifestCheck[] | undefined) ?? [];
   const hash =
-    typeof manifest?.manifest_hash === "string"
+    typeof manifest.manifest_hash === "string"
       ? manifest.manifest_hash
       : "…";
 
   return (
     <div className="space-y-3">
       <VerifiedSealBadge manifestHash={hash} />
-      {err && <p className="text-xs text-red-600">{err}</p>}
       {checks.length > 0 && (
         <div className="rounded-lg border border-zinc-300 bg-white p-3 text-xs dark:border-zinc-700 dark:bg-zinc-900">
           <div className="mb-2 font-semibold">Validator checks</div>

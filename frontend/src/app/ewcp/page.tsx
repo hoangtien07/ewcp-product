@@ -41,9 +41,13 @@ export default function EwcpPage() {
     }
   }, []);
 
+  // only the latest async selection wins — a slower earlier fetch (select
+  // or restore) must not reopen the wrong run on top of a newer pick
+  const selectSeq = useRef(0);
+
   // restore the last open run on mount — a pending ask-back or approval
-  // must stay reachable across reloads. A 401 with no key entered yet keeps
-  // the saved id: the effect re-runs once the user types their key.
+  // must stay reachable across reloads. A 401 (missing or wrong key) keeps
+  // the saved id: the effect re-runs whenever the key changes.
   const restoredRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current) return;
@@ -57,14 +61,16 @@ export default function EwcpPage() {
       restoredRef.current = true;
       return;
     }
+    const seq = ++selectSeq.current;
     void getRun(id, { apiKey: creds.apiKey })
       .then((r) => {
         restoredRef.current = true;
-        updateRun(r);
+        // a run the user picked while this restore was in flight wins
+        if (seq === selectSeq.current) updateRun(r);
       })
       .catch((e) => {
-        if (e instanceof EwcpError && e.status === 401 && !creds.apiKey) {
-          return; // wait for the user to enter their key — keep the id
+        if (e instanceof EwcpError && e.status === 401) {
+          return; // credentials not right yet — keep the id, retry on key change
         }
         restoredRef.current = true;
         try {
@@ -74,10 +80,6 @@ export default function EwcpPage() {
         }
       });
   }, [creds.apiKey, updateRun]);
-
-  // only the latest selection wins — a slower earlier fetch must not reopen
-  // the wrong run on top of what the user picked next
-  const selectSeq = useRef(0);
   const select = useCallback(
     (workrunId: string) => {
       const seq = ++selectSeq.current;

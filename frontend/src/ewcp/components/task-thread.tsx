@@ -161,7 +161,11 @@ export function TaskThread({
     run.pending_questions.some((q) => q.kind === "missing_input");
   const askBack =
     run?.pending_questions.filter((q) => q.kind !== "missing_input") ?? [];
-  const showApproval = run?.status === "candidate_complete";
+  // candidate_complete = attempt signaled done awaiting seal decision;
+  // awaiting_approval is the kernel's equivalent pre-approval state — both
+  // need the approval card or the run wedges with no control left.
+  const showApproval =
+    run?.status === "candidate_complete" || run?.status === "awaiting_approval";
 
   return (
     <div className="space-y-4">
