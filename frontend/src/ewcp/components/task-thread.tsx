@@ -152,7 +152,13 @@ export function TaskThread({
         }
       })
       .catch(() => {
-        /* pre-registry kernel or offline — stay on FALLBACK_SPECS */
+        /* pre-registry kernel, offline, or a bad key — drop back to the
+           static copy so the notice reflects the CURRENT state rather
+           than stale live specs */
+        if (!dead) {
+          setSpecs(FALLBACK_SPECS);
+          setSpecsLive(false);
+        }
       });
     return () => {
       dead = true;
