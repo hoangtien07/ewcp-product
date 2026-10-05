@@ -63,6 +63,7 @@ export function TaskThread({
   const [intent, setIntent] = useState("");
   const [zip, setZip] = useState<File | null>(null);
   const [books, setBooks] = useState<File | null>(null);
+  const [dossier, setDossier] = useState<File | null>(null);
   const [clarify, setClarify] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -113,6 +114,7 @@ export function TaskThread({
         apiKey: creds.apiKey,
         invoicesZip: zip,
         books,
+        dossierZip: dossier,
       });
       if (res.status === "clarify") {
         setClarify(res.clarify_question ?? "Chưa rõ yêu cầu.");
@@ -138,10 +140,12 @@ export function TaskThread({
           apiKey: creds.apiKey,
           invoicesZip: zip,
           books,
+          dossierZip: dossier,
         }),
       );
       setZip(null);
       setBooks(null);
+      setDossier(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -167,19 +171,24 @@ export function TaskThread({
           placeholder="Yêu cầu nghiệp vụ (tiếng Việt) — vd: đối soát hóa đơn kỳ 09/2025"
           className="w-full resize-y rounded-md border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-600"
         />
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
           <FileSlot
             label="Zip hóa đơn (XML/PDF)"
             file={zip}
             onPick={setZip}
           />
           <FileSlot label="Sổ kế toán (CSV/XLSX)" file={books} onPick={setBooks} />
+          <FileSlot
+            label="Zip hồ sơ chứng từ (dossier)"
+            file={dossier}
+            onPick={setDossier}
+          />
         </div>
         <div className="mt-3 flex items-center gap-3">
           {awaitingFiles ? (
             <button
               onClick={sendInputs}
-              disabled={busy || (!zip && !books)}
+              disabled={busy || (!zip && !books && !dossier)}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {busy ? "Đang gửi…" : "Gửi file bổ sung"}

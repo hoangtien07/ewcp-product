@@ -83,6 +83,7 @@ export async function createTask(
     mst?: string;
     invoicesZip?: File | null;
     books?: File | null;
+    dossierZip?: File | null;
   },
 ): Promise<TaskResponse & Partial<RunView>> {
   const fd = new FormData();
@@ -92,6 +93,7 @@ export async function createTask(
   if (args.mst) fd.set("mst_doanh_nghiep", args.mst);
   if (args.invoicesZip) fd.set("invoices_zip", args.invoicesZip);
   if (args.books) fd.set("books", args.books);
+  if (args.dossierZip) fd.set("dossier_zip", args.dossierZip);
   const res = await fetch(`${API}/tasks`, {
     method: "POST",
     headers: mutatingHeaders(args.apiKey),
@@ -102,12 +104,13 @@ export async function createTask(
 
 export async function supplyInputs(
   workrunId: string,
-  args: { tenant: string; apiKey: string; invoicesZip?: File | null; books?: File | null },
+  args: { tenant: string; apiKey: string; invoicesZip?: File | null; books?: File | null; dossierZip?: File | null },
 ): Promise<RunView> {
   const fd = new FormData();
   fd.set("tenant_id", args.tenant);
   if (args.invoicesZip) fd.set("invoices_zip", args.invoicesZip);
   if (args.books) fd.set("books", args.books);
+  if (args.dossierZip) fd.set("dossier_zip", args.dossierZip);
   const res = await fetch(`${API}/tasks/${workrunId}/inputs`, {
     method: "POST",
     headers: mutatingHeaders(args.apiKey),
