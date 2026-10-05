@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, rs, test } from "@rstest/core";
 
-import { createTask, decide, EwcpError, verifyArtifacts } from "@/ewcp/api";
+import {
+  createTask,
+  decide,
+  EwcpError,
+  getOutcome,
+  listRuns,
+  verifyArtifacts,
+} from "@/ewcp/api";
 
 function mockFetch(status: number, body: unknown) {
   const calls: { url: string; init?: RequestInit }[] = [];
@@ -79,6 +86,29 @@ describe("ewcp api client", () => {
     expect(fd.getAll("files")).toHaveLength(1);
     // verify is public — no auth header must be set (csrf cookie absent in test env)
     expect(call?.init?.headers).toEqual({});
+  });
+
+  test("getOutcome fetches /workruns/{id}/outcome with api key", async () => {
+    const calls = mockFetch(200, {
+      outcome_type: "dossier_check",
+      result: { verdict: "fail", rows: [], documents: [] },
+    });
+    const res = await getOutcome("wr9", { apiKey: "k2" });
+    expect(res.outcome_type).toBe("dossier_check");
+    const call = calls.at(0);
+    expect(call?.url).toBe("/api/ewcp/workruns/wr9/outcome");
+    expect(
+      (call?.init?.headers as Record<string, string>)["x-ewcp-api-key"],
+    ).toBe("k2");
+  });
+
+  test("listRuns unwraps both list and {items} shapes", async () => {
+    mockFetch(200, [{ workrun_id: "a" }, { workrun_id: "b" }]);
+    const list = await listRuns({ apiKey: "", tenant: "demo" });
+    expect(list).toHaveLength(2);
+    mockFetch(200, { items: [{ workrun_id: "c" }] });
+    const wrapped = await listRuns({ apiKey: "", tenant: "demo" });
+    expect(wrapped[0]?.workrun_id).toBe("c");
   });
 
   test("non-2xx raises EwcpError with status + detail", async () => {

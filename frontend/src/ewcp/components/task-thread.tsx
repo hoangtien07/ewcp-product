@@ -19,6 +19,7 @@ import {
 
 import { DecisionCard } from "./decision-card";
 import { ManifestCard } from "./manifest-card";
+import { StudioCard } from "./studio-card";
 
 interface Creds {
   apiKey: string;
@@ -50,53 +51,25 @@ function FileSlot({
   );
 }
 
-export function TaskThread({ creds }: { creds: Creds }) {
+export function TaskThread({
+  creds,
+  run,
+  onRun,
+}: {
+  creds: Creds;
+  run: RunView | null;
+  onRun: (r: RunView | null) => void;
+}) {
   const [intent, setIntent] = useState("");
   const [zip, setZip] = useState<File | null>(null);
   const [books, setBooks] = useState<File | null>(null);
-  const [run, setRun] = useState<RunView | null>(null);
   const [clarify, setClarify] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Persist the active run id so a reload restores the workspace (a pending
-  // ask-back or approval must not become unreachable). Key is a non-secret id.
-  const updateRun = useCallback((r: RunView | null) => {
-    setRun(r);
-    try {
-      if (r?.workrun_id) {
-        sessionStorage.setItem("ewcp_last_run", r.workrun_id);
-      } else {
-        sessionStorage.removeItem("ewcp_last_run");
-      }
-    } catch {
-      /* private mode */
-    }
-  }, []);
-
-  useEffect(() => {
-    let id: string | null = null;
-    try {
-      id = sessionStorage.getItem("ewcp_last_run");
-    } catch {
-      /* private mode */
-    }
-    if (!id) return;
-    void getRun(id, { apiKey: creds.apiKey })
-      .then((r) => updateRun(r))
-      .catch(() => {
-        try {
-          sessionStorage.removeItem("ewcp_last_run");
-        } catch {
-          /* ignore */
-        }
-      });
-    // restore once on mount — creds are loaded async; a key change does not
-    // re-restore a dismissed run.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  // run state + restore live in the page (history rail selects there too);
+  // this component only drives the active run forward.
   const stopPoll = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = null;
@@ -117,14 +90,14 @@ export function TaskThread({ creds }: { creds: Creds }) {
     pollRef.current = setInterval(() => {
       void (async () => {
         try {
-          updateRun(await getRun(run.workrun_id, creds));
+          onRun(await getRun(run.workrun_id, creds));
         } catch {
           /* transient */
         }
       })();
     }, 2000);
     return stopPoll;
-  }, [run, creds, stopPoll, updateRun]);
+  }, [run, creds, stopPoll, onRun]);
 
   useEffect(() => stopPoll, [stopPoll]);
 
@@ -143,9 +116,9 @@ export function TaskThread({ creds }: { creds: Creds }) {
       });
       if (res.status === "clarify") {
         setClarify(res.clarify_question ?? "Chưa rõ yêu cầu.");
-        updateRun(null);
+        onRun(null);
       } else {
-        updateRun(res as RunView);
+        onRun(res as RunView);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -159,7 +132,7 @@ export function TaskThread({ creds }: { creds: Creds }) {
     setBusy(true);
     setErr(null);
     try {
-      updateRun(
+      onRun(
         await supplyInputs(run.workrun_id, {
           tenant: creds.tenant,
           apiKey: creds.apiKey,
@@ -300,7 +273,7 @@ export function TaskThread({ creds }: { creds: Creds }) {
               q={q}
               run={run}
               creds={{ ...creds }}
-              onDone={updateRun}
+              onDone={onRun}
             />
           ))}
 
@@ -316,7 +289,7 @@ export function TaskThread({ creds }: { creds: Creds }) {
               }}
               run={run}
               creds={{ ...creds }}
-              onDone={updateRun}
+              onDone={onRun}
             />
           )}
 
@@ -354,6 +327,9 @@ export function TaskThread({ creds }: { creds: Creds }) {
               </ul>
             </div>
           )}
+
+          {/* studio surface — outcome-rich view fed by /outcome */}
+          <StudioCard run={run} apiKey={creds.apiKey} />
 
           {/* sealed manifest */}
           <ManifestCard run={run} creds={creds} />

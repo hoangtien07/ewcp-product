@@ -196,6 +196,16 @@ export async function downloadDeliverable(
   URL.revokeObjectURL(url);
 }
 
+export async function getOutcome(
+  workrunId: string,
+  args: { apiKey: string },
+): Promise<{ outcome_type: string; result: unknown }> {
+  const res = await fetch(`${API}/workruns/${workrunId}/outcome`, {
+    headers: authHeaders(args.apiKey),
+  });
+  return parse(res);
+}
+
 export async function listRuns(
   args: { apiKey: string; tenant: string },
 ): Promise<RunView[]> {
