@@ -2,11 +2,17 @@
 // extension router → in-process kernel mount). Auth: x-ewcp-api-key when the
 // tenant entered a key, else tenant_id form field (dev/demo mode).
 
+export interface DecisionOption {
+  id: string; // stable slug — the dispatch key new clients post back
+  label: string; // display text (kernel already sends Vietnamese prose)
+}
+
 export interface PendingQuestion {
   decision_id: string;
   kind: string; // missing_input | option_choice | confirm_value | approval
   prompt: string;
-  options: string[];
+  options: string[]; // legacy wire: labels a pane may post verbatim
+  options_v2?: DecisionOption[]; // slug contract — post .id when present
 }
 
 export interface Deliverable {
@@ -29,7 +35,9 @@ export interface RunView {
   deliverables: Deliverable[];
   ingest_errors: string[];
   skipped: string[];
-  counts?: { invoices: number; book_rows: number; docs?: number };
+  // pack-owned counters from spec.summarize (run_summary.json) — the
+  // pane renders them generically, keyed by count name not outcome_type
+  counts?: Record<string, number | undefined>;
   decision?: { answer: string; decided_by: string };
   error?: string;
 }
@@ -79,11 +87,12 @@ export async function createTask(
     intent: string;
     tenant: string;
     apiKey: string;
-    ky?: string;
-    mst?: string;
-    invoicesZip?: File | null;
-    books?: File | null;
-    dossierZip?: File | null;
+    // spec-declared multipart inputs, keyed by requires_inputs[].name
+    // from GET /outcomes (e.g. invoices_zip, books, dossier_zip)
+    files?: Record<string, File | null>;
+    // spec-declared context keys posted as plain form fields
+    // (e.g. ky, mst_doanh_nghiep for invoice_recon)
+    context?: Record<string, string>;
     // kernel honors Idempotency-Key (tenant-scoped) — retries of the same
     // logical submission reuse the caller's key instead of spawning a second run
     idempotencyKey?: string;
@@ -92,11 +101,12 @@ export async function createTask(
   const fd = new FormData();
   fd.set("intent", args.intent);
   fd.set("tenant_id", args.tenant);
-  if (args.ky) fd.set("ky", args.ky);
-  if (args.mst) fd.set("mst_doanh_nghiep", args.mst);
-  if (args.invoicesZip) fd.set("invoices_zip", args.invoicesZip);
-  if (args.books) fd.set("books", args.books);
-  if (args.dossierZip) fd.set("dossier_zip", args.dossierZip);
+  for (const [k, v] of Object.entries(args.context ?? {})) {
+    if (v) fd.set(k, v);
+  }
+  for (const [name, f] of Object.entries(args.files ?? {})) {
+    if (f) fd.set(name, f);
+  }
   const res = await fetch(`${API}/tasks`, {
     method: "POST",
     headers: {
@@ -112,17 +122,46 @@ export async function createTask(
 
 export async function supplyInputs(
   workrunId: string,
-  args: { tenant: string; apiKey: string; invoicesZip?: File | null; books?: File | null; dossierZip?: File | null },
+  args: {
+    tenant: string;
+    apiKey: string;
+    files?: Record<string, File | null>;
+  },
 ): Promise<RunView> {
   const fd = new FormData();
   fd.set("tenant_id", args.tenant);
-  if (args.invoicesZip) fd.set("invoices_zip", args.invoicesZip);
-  if (args.books) fd.set("books", args.books);
-  if (args.dossierZip) fd.set("dossier_zip", args.dossierZip);
+  for (const [name, f] of Object.entries(args.files ?? {})) {
+    if (f) fd.set(name, f);
+  }
   const res = await fetch(`${API}/tasks/${workrunId}/inputs`, {
     method: "POST",
     headers: mutatingHeaders(args.apiKey),
     body: fd,
+  });
+  return parse(res);
+}
+
+// GET /outcomes — the pack registry as wire data (P0 pack contract).
+// The pane renders slots/hints from this instead of hardcoding packs.
+export interface OutcomeInputSpec {
+  name: string; // multipart field name
+  accept: string; // file-picker accept filter, e.g. ".zip" or ".csv,.xlsx"
+  label_vn: string; // Vietnamese slot label
+  required: boolean; // kernel InputReq.required — optional slots never block
+}
+
+export interface OutcomeSpecView {
+  outcome_type: string;
+  description: string;
+  required_checks: string[];
+  requires_inputs: OutcomeInputSpec[];
+}
+
+export async function listOutcomes(args: {
+  apiKey: string;
+}): Promise<OutcomeSpecView[]> {
+  const res = await fetch(`${API}/outcomes`, {
+    headers: authHeaders(args.apiKey),
   });
   return parse(res);
 }
