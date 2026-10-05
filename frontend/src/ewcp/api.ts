@@ -29,7 +29,7 @@ export interface RunView {
   deliverables: Deliverable[];
   ingest_errors: string[];
   skipped: string[];
-  counts?: { invoices: number; book_rows: number };
+  counts?: { invoices: number; book_rows: number; docs?: number };
   decision?: { answer: string; decided_by: string };
   error?: string;
 }
@@ -43,7 +43,7 @@ export interface TaskResponse {
 
 export interface VerifyResult {
   workrun_id: string;
-  ok: boolean;
+  verdict: "PASS" | "FAIL";
   manifest_ok: boolean;
   artifacts: {
     deliverable_id: string;
