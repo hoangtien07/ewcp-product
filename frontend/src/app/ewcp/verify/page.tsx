@@ -15,7 +15,10 @@ function VerifyInner() {
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <VerifyView initialRun={params.get("run") ?? undefined} />
+        <VerifyView
+          initialRun={params.get("run") ?? undefined}
+          initialManifest={params.get("manifest") ?? undefined}
+        />
       </div>
     </div>
   );

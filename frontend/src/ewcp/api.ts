@@ -227,6 +227,57 @@ export async function verifyArtifacts(
   return parse(res);
 }
 
+// GET /verify/{manifest_hash} — public seal permalink. The kernel answers
+// with no auth at all: the hash IS the capability (kernel api/app.py —
+// "Public and cross-tenant by design"). Scope: proves a sealed manifest
+// EXISTS and its HMAC seal recomputes; it does NOT re-measure artifact
+// bytes — byte-integrity still needs the POST /verify upload path.
+export interface PermalinkDeliverable {
+  deliverable_id?: string;
+  kind?: string;
+  sha256?: string;
+  name?: string;
+}
+
+export interface PermalinkCheck {
+  name?: string;
+  result?: string;
+  detail?: string;
+  validator_ref?: string;
+  evidence_hash?: string;
+}
+
+export interface VerifyPermalinkResult {
+  workrun_id: string;
+  // true = seal recomputes | false = seal mismatch | null = kernel has no
+  // seal key configured (authenticity unprovable, manifest still resolves)
+  seal_ok: boolean | null;
+  manifest: {
+    workrun_id?: string;
+    manifest_hash?: string;
+    seal?: string | null;
+    deliverables?: PermalinkDeliverable[];
+    checks?: PermalinkCheck[];
+  };
+}
+
+export async function verifyPermalink(
+  manifestHash: string,
+): Promise<VerifyPermalinkResult> {
+  const res = await fetch(
+    `${API}/verify/${encodeURIComponent(manifestHash)}`,
+  );
+  return parse(res);
+}
+
+// The shareable URL a third party opens — routes back into this pane's
+// public verify page with the hash in the query string.
+export function verifyShareUrl(manifestHash: string): string {
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "";
+  return `${origin}/ewcp/verify?manifest=${encodeURIComponent(manifestHash)}`;
+}
+
 export async function downloadDeliverable(
   workrunId: string,
   deliverableId: string,

@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { getManifest, type RunView } from "@/ewcp/api";
 import { decisionLabel } from "@/ewcp/labels";
 
+import { ShareVerifyLink } from "./share-verify-link";
 import { VerifiedSealBadge } from "./unverified-badge";
 
 interface ManifestCheck {
@@ -100,6 +101,12 @@ export function ManifestCard({
       >
         Mở trang verify — khách tự kiểm chứng →
       </a>
+      {/* share link only once the real sealed hash is known — never a
+          placeholder (same rule as the badge above) */}
+      {typeof manifest.manifest_hash === "string" &&
+        manifest.manifest_hash.length > 0 && (
+          <ShareVerifyLink manifestHash={manifest.manifest_hash} />
+        )}
     </div>
   );
 }
