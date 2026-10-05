@@ -6,6 +6,7 @@ import {
   FALLBACK_SPECS,
   inputsFor,
   isZipInput,
+  starterIntentsFor,
   unionInputs,
 } from "@/ewcp/registry";
 
@@ -137,6 +138,30 @@ describe("ewcp registry — spec-driven pane mapping", () => {
       invoices_zip: "three_way_invoices",
       receipts: "three_way_receipts",
     });
+  });
+
+  test("starterIntentsFor caps at 2 deduped, preset intents first", () => {
+    // invoice_recon has 2 presets sharing one intent -> that intent +
+    // one curated starter = 2 chips
+    const reconIntents = starterIntentsFor(recon);
+    expect(reconIntents).toHaveLength(2);
+    expect(reconIntents[0]).toContain("Đối soát hóa đơn");
+    // three_way_match has 3 presets all on the same intent (with the
+    // required_context MST baked in) -> dedupe leaves it first
+    const threeWayIntents = starterIntentsFor(threeWay);
+    expect(threeWayIntents).toHaveLength(2);
+    for (const t of threeWayIntents) {
+      expect(t).toContain("0300000001");
+    }
+    // a pack with no mapping renders no chips rather than a guess
+    expect(
+      starterIntentsFor({
+        outcome_type: "unknown_pack",
+        description: "",
+        required_checks: [],
+        requires_inputs: [],
+      }),
+    ).toEqual([]);
   });
 
   test("FALLBACK_SPECS mirrors the kernel's seeded packs (registry order)", () => {

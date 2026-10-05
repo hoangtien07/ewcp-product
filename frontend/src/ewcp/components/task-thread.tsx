@@ -36,6 +36,7 @@ import {
 
 import { DecisionCard } from "./decision-card";
 import { ManifestCard } from "./manifest-card";
+import { PackGallery } from "./pack-gallery";
 import { StudioCard } from "./studio-card";
 
 interface Creds {
@@ -98,6 +99,8 @@ export function TaskThread({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // gallery starter chips fill + focus this box
+  const intentRef = useRef<HTMLTextAreaElement | null>(null);
   // Idempotency-Key per draft: one key for the same (intent + files)
   // submission, so a retry after a network error replays server-side
   // instead of creating a second run. A different draft gets a new key.
@@ -307,6 +310,7 @@ export function TaskThread({
       {/* intake */}
       <div className="rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
         <textarea
+          ref={intentRef}
           value={intent}
           onChange={(e) => setIntent(e.target.value)}
           rows={2}
@@ -328,8 +332,8 @@ export function TaskThread({
         </p>
         {!specsLive && (
           <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-            Spec tĩnh — không đọc được registry kernel (kiểm tra API key);
-            một số nghiệp vụ có thể thiếu.
+            Spec tĩnh — không đọc được registry kernel (kiểm tra API key); một
+            số nghiệp vụ có thể thiếu.
           </p>
         )}
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -385,6 +389,23 @@ export function TaskThread({
           )}
         </div>
       </div>
+
+      {/* pack gallery — catalog browse surface for a fresh request
+          (gap-catalog Catalog UX #2). Hidden while a run is open: the
+          intake slots then narrow to that run's own spec, and the run
+          surface is the focus. */}
+      {!run && (
+        <PackGallery
+          specs={specs}
+          presets={presets}
+          busy={busy}
+          onIntent={(t) => {
+            setIntent(t);
+            intentRef.current?.focus();
+          }}
+          onPreset={(p) => void loadPreset(p)}
+        />
+      )}
 
       {clarify && (
         <div className="rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
