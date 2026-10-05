@@ -43,6 +43,8 @@ export const COUNT_LABEL: Record<string, string> = {
   book_rows: "dòng sổ",
   docs: "chứng từ",
   n_invoices: "hóa đơn",
+  pos: "PO",
+  receipts: "phiếu nhận",
   n_pos: "PO",
   n_receipts: "phiếu nhận",
 };
