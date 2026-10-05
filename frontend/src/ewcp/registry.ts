@@ -86,6 +86,41 @@ export const DEMO_PRESETS: Record<string, DemoPreset[]> = {
       intent: "Kiểm tra hồ sơ chứng từ lô hàng gần nhất",
     },
   ],
+  // three_way_match needs mst_doanh_nghiep in context (required_context)
+  // — the kernel's extract_context parses it (and ky) out of the intent
+  // text, so the sample intent carries the demo buyer MST 0300000001.
+  three_way_match: [
+    {
+      label: "3 chiều",
+      fixtures: {
+        po_files: "three_way_po",
+        invoices_zip: "three_way_invoices",
+        receipts: "three_way_receipts",
+      },
+      intent:
+        "Đối chiếu 3 chiều PO với phiếu nhận kho và hóa đơn kỳ 09/2025, MST 0300000001",
+    },
+    {
+      label: "3 chiều (sạch)",
+      fixtures: {
+        po_files: "three_way_po_clean",
+        invoices_zip: "three_way_invoices_clean",
+        receipts: "three_way_receipts_clean",
+      },
+      intent:
+        "Đối chiếu 3 chiều PO với phiếu nhận kho và hóa đơn kỳ 09/2025, MST 0300000001",
+    },
+    {
+      label: "3 chiều (PO lỗi)",
+      fixtures: {
+        po_files: "three_way_po_corrupt",
+        invoices_zip: "three_way_invoices",
+        receipts: "three_way_receipts",
+      },
+      intent:
+        "Đối chiếu 3 chiều PO với phiếu nhận kho và hóa đơn kỳ 09/2025, MST 0300000001",
+    },
+  ],
 };
 
 export interface BoundPreset extends DemoPreset {
