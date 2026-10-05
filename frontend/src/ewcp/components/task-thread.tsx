@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createTask,
   downloadDeliverable,
+  fetchDemoFixture,
   getRun,
   supplyInputs,
   type RunView,
@@ -69,6 +70,10 @@ export function TaskThread({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Idempotency-Key per draft: one key for the same (intent + files)
+  // submission, so a retry after a network error replays server-side
+  // instead of creating a second run. A different draft gets a new key.
+  const idemRef = useRef<{ fp: string; key: string } | null>(null);
 
   // run state + restore live in the page (history rail selects there too);
   // this component only drives the active run forward.
@@ -112,6 +117,16 @@ export function TaskThread({
     setErr(null);
     setClarify(null);
     try {
+      // fingerprint covers name+size+mtime so a re-picked file with the
+      // same name but different content counts as a new submission
+      const fp = [intent, zip, books, dossier]
+        .map((x) =>
+          x instanceof File ? `${x.name}:${x.size}:${x.lastModified}` : x,
+        )
+        .join("|");
+      if (idemRef.current?.fp !== fp) {
+        idemRef.current = { fp, key: crypto.randomUUID() };
+      }
       const res = await createTask({
         intent,
         tenant: creds.tenant,
@@ -119,6 +134,7 @@ export function TaskThread({
         invoicesZip: zip,
         books,
         dossierZip: dossier,
+        idempotencyKey: idemRef.current.key,
       });
       if (res.status === "clarify") {
         setClarify(res.clarify_question ?? "Chưa rõ yêu cầu.");
@@ -150,6 +166,37 @@ export function TaskThread({
       setZip(null);
       setBooks(null);
       setDossier(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadFixture(kind: "recon" | "recon_corrupt" | "dossier") {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      if (kind === "dossier") {
+        setDossier(await fetchDemoFixture("dossier"));
+        // a sample is the whole draft — stale picks from a previous
+        // workflow must not ride along into this one
+        setZip(null);
+        setBooks(null);
+        if (!intent.trim())
+          setIntent("Kiểm tra hồ sơ chứng từ lô hàng gần nhất");
+      } else {
+        setZip(
+          await fetchDemoFixture(
+            kind === "recon_corrupt" ? "invoices_corrupt" : "invoices",
+          ),
+        );
+        setBooks(await fetchDemoFixture("books"));
+        setDossier(null);
+        if (!intent.trim())
+          setIntent("Đối soát hóa đơn kỳ 09/2025");
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -190,6 +237,26 @@ export function TaskThread({
             file={dossier}
             onPick={setDossier}
           />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-zinc-500">Dữ liệu mẫu:</span>
+          {(
+            [
+              ["recon", "đối soát"],
+              ["recon_corrupt", "đối soát (file lỗi)"],
+              ["dossier", "hồ sơ chứng từ"],
+            ] as const
+          ).map(([kind, label]) => (
+            <button
+              key={kind}
+              type="button"
+              disabled={busy}
+              onClick={() => void loadFixture(kind)}
+              className="rounded border border-zinc-300 px-2 py-0.5 text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              {label}
+            </button>
+          ))}
         </div>
         <div className="mt-3 flex items-center gap-3">
           {awaitingFiles ? (
