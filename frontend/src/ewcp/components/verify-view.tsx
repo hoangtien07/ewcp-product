@@ -1,24 +1,77 @@
 "use client";
 
-// VerifyView — verify-by-them surface. The verifier downloads the evidence
-// export (GET /workruns/{id}/evidence) + the artifacts, optionally TAMPERS
-// with a file, then uploads both here → PASS/FAIL per artifact + manifest
-// hash recompute. No auth — verification must not require trusting us.
+// VerifyView — verify-by-them surface. Two lanes:
+// 1. Permalink (/ewcp/verify?manifest=<hash>): a third party opens a shared
+//    link → GET /verify/{hash} (public by design) → seal state + manifest
+//    contents. No key, no upload — proves the seal EXISTS.
+// 2. Byte-integrity upload: the verifier downloads the evidence export
+//    (GET /workruns/{id}/evidence) + the artifacts, optionally TAMPERS
+//    with a file, then uploads both here → PASS/FAIL per artifact +
+//    manifest hash recompute. No auth — verification must not require
+//    trusting us.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { getEvidence, verifyArtifacts, type VerifyResult } from "@/ewcp/api";
+import {
+  getEvidence,
+  verifyArtifacts,
+  verifyPermalink,
+  type VerifyPermalinkResult,
+  type VerifyResult,
+} from "@/ewcp/api";
 
-export function VerifyView({ initialRun }: { initialRun?: string }) {
+export function VerifyView({
+  initialRun,
+  initialManifest,
+}: {
+  initialRun?: string;
+  initialManifest?: string;
+}) {
   // apiKey stays in memory only (repo rule: no tokens in web storage) —
   // only the "Tải evidence" call needs it; /verify itself is unauthenticated.
   const [apiKey, setApiKey] = useState("");
   const [runId, setRunId] = useState(initialRun ?? "");
+  const [manifestHash, setManifestHash] = useState(initialManifest ?? "");
+  const [permalink, setPermalink] = useState<VerifyPermalinkResult | null>(
+    null,
+  );
+  const [permalinkErr, setPermalinkErr] = useState<string | null>(null);
+  const [permalinkBusy, setPermalinkBusy] = useState(false);
+  const permalinkSeq = useRef(0);
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [artifactFiles, setArtifactFiles] = useState<File[]>([]);
   const [result, setResult] = useState<VerifyResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  async function lookupManifest(hash: string) {
+    const trimmed = hash.trim();
+    if (!trimmed) return;
+    const seq = ++permalinkSeq.current;
+    setPermalinkBusy(true);
+    setPermalinkErr(null);
+    setPermalink(null);
+    try {
+      const res = await verifyPermalink(trimmed);
+      if (seq !== permalinkSeq.current) return; // stale lookup
+      setPermalink(res);
+      // chain into lane 2: the workrun id lets the verifier pull the
+      // evidence export next without typing anything
+      if (res.workrun_id) setRunId(res.workrun_id);
+    } catch (e) {
+      if (seq !== permalinkSeq.current) return;
+      setPermalinkErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (seq === permalinkSeq.current) setPermalinkBusy(false);
+    }
+  }
+
+  // share-link landing: /ewcp/verify?manifest=<hash> auto-looks-up
+  useEffect(() => {
+    if (initialManifest) void lookupManifest(initialManifest);
+    // mount-only: the URL param is the trigger, not reactive state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function downloadEvidence() {
     if (!runId.trim()) return;
@@ -59,6 +112,131 @@ export function VerifyView({ initialRun }: { initialRun?: string }) {
 
   return (
     <div className="space-y-4">
+      <div className="rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
+        <h2 className="text-sm font-semibold">
+          Tra cứu bằng chứng niêm phong — link công khai
+        </h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          Ai có link đều tra cứu được — không cần API key. Link chứng minh
+          manifest đã niêm phong tồn tại và seal còn nguyên; kiểm chứng từng
+          byte của file cần evidence export + artifacts (form bên dưới).
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            value={manifestHash}
+            onChange={(e) => setManifestHash(e.target.value)}
+            placeholder="manifest_hash (64 ký tự hex)"
+            className="min-w-56 flex-1 rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 font-mono text-xs dark:border-zinc-600"
+          />
+          <button
+            onClick={() => lookupManifest(manifestHash)}
+            disabled={permalinkBusy || !manifestHash.trim()}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {permalinkBusy ? "Đang tra cứu…" : "Tra cứu"}
+          </button>
+        </div>
+        {permalinkErr && (
+          <p className="mt-2 text-xs text-red-600">{permalinkErr}</p>
+        )}
+      </div>
+
+      {permalink && (
+        <div
+          className={`rounded-lg border-2 p-4 ${
+            permalink.seal_ok === true
+              ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40"
+              : permalink.seal_ok === false
+                ? "border-red-600 bg-red-50 dark:bg-red-950/40"
+                : "border-amber-500 bg-amber-50 dark:bg-amber-950/40"
+          }`}
+        >
+          <div
+            className={`text-lg font-bold ${
+              permalink.seal_ok === true
+                ? "text-emerald-700 dark:text-emerald-300"
+                : permalink.seal_ok === false
+                  ? "text-red-700 dark:text-red-300"
+                  : "text-amber-700 dark:text-amber-300"
+            }`}
+          >
+            {permalink.seal_ok === true
+              ? "PASS — niêm phong hợp lệ"
+              : permalink.seal_ok === false
+                ? "FAIL — seal không khớp"
+                : "MANIFEST TỒN TẠI — seal không chứng minh được"}
+          </div>
+          {permalink.seal_ok === false && (
+            <p className="mt-1 text-xs text-red-700 dark:text-red-300">
+              Seal HMAC không khớp — manifest có thể đã bị sửa sau niêm
+              phong.
+            </p>
+          )}
+          {permalink.seal_ok === null && (
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+              Kernel không cấu hình seal key — chứng minh được manifest tồn
+              tại nhưng không chứng minh được tính xác thực.
+            </p>
+          )}
+          <dl className="mt-3 space-y-1 text-xs">
+            <div className="flex gap-2">
+              <dt className="text-zinc-500">manifest_hash</dt>
+              <dd className="break-all font-mono">
+                {permalink.manifest.manifest_hash ?? "…"}
+              </dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="text-zinc-500">workrun_id</dt>
+              <dd className="font-mono">{permalink.workrun_id}</dd>
+            </div>
+          </dl>
+          {(permalink.manifest.checks?.length ?? 0) > 0 && (
+            <ul className="mt-3 space-y-1 text-xs">
+              {(permalink.manifest.checks ?? []).map((c, i) => (
+                <li key={i} className="flex gap-2">
+                  <span
+                    className={
+                      c.result === "PASS"
+                        ? "text-emerald-600"
+                        : "text-red-600"
+                    }
+                  >
+                    {c.result ?? "?"}
+                  </span>
+                  <span className="flex-1">
+                    <span className="font-mono">{c.name}</span>
+                    {c.detail && (
+                      <span className="text-zinc-500"> — {c.detail}</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {(permalink.manifest.deliverables?.length ?? 0) > 0 && (
+            <div className="mt-3">
+              <div className="text-xs font-semibold text-zinc-500">
+                Artifacts đã niêm phong
+              </div>
+              <ul className="mt-1 space-y-1 text-xs">
+                {(permalink.manifest.deliverables ?? []).map((d, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="font-mono">
+                      {d.name ?? d.deliverable_id}
+                    </span>
+                    {d.sha256 && (
+                      <span className="break-all font-mono text-zinc-400">
+                        sha256:{d.sha256.slice(0, 16)}…
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
         <h2 className="text-sm font-semibold">
           Xác minh độc lập — verify-by-them

@@ -9,8 +9,11 @@ Planned surfaces (workspace-council studio archaeology — commodity only):
 - `TaskThread` — governed task thread: intent → ask-back cards → progress →
   decision card → sealed manifest card.
 - `ManifestCard` — VerificationManifest render (sealed hash, checks,
-  decided_by) + link to verify.
-- `VerifyView` — public re-verify result (PASS/FAIL + failing file name).
+  decided_by) + link to verify + `ShareVerifyLink` (copies the public
+  `/ewcp/verify?manifest=<hash>` permalink for third parties).
+- `VerifyView` — public surfaces: permalink lookup (`?manifest=` →
+  GET /verify/{hash}, no auth — the hash is the capability) + re-verify
+  upload result (PASS/FAIL + failing file name).
 - `UnverifiedBadge` — badge dominating all artifact chrome on exploratory
   (non-governed) artifacts; provenance ≠ verification (Perplexity trap).
 - `DossierViewer` — doc-viewer + form panel for chứng từ dossier (pdf.js).
