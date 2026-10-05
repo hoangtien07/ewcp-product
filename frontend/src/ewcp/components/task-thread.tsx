@@ -7,6 +7,7 @@
 // POST /tasks/{id}/inputs — the file ask-back workaround (upstream
 // clarification form has no file field; EWCP pane owns the slot instead).
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -17,6 +18,11 @@ import {
   supplyInputs,
   type RunView,
 } from "@/ewcp/api";
+import {
+  handoffThreadPath,
+  handoffToGeneralLane,
+  type ExploratoryHandoff,
+} from "@/ewcp/exploratory";
 import { statusLabel } from "@/ewcp/labels";
 
 import { DecisionCard } from "./decision-card";
@@ -57,11 +63,14 @@ export function TaskThread({
   creds,
   run,
   onRun,
+  onHandoff,
 }: {
   creds: Creds;
   run: RunView | null;
   onRun: (r: RunView | null) => void;
+  onHandoff?: (h: ExploratoryHandoff) => void;
 }) {
+  const router = useRouter();
   const [intent, setIntent] = useState("");
   const [zip, setZip] = useState<File | null>(null);
   const [books, setBooks] = useState<File | null>(null);
@@ -145,6 +154,27 @@ export function TaskThread({
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
+      setBusy(false);
+    }
+  }
+
+  // Clarify dead-end → handoff: re-intake the draft intent into the
+  // general assistant lane (upstream lead_agent chat). Q24 firewall —
+  // re-intake only; the handed-off thread stays UNVERIFIED forever.
+  async function handoff() {
+    if (!clarify || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const h = await handoffToGeneralLane({
+        intent: intent.trim() || clarify,
+        clarifyQuestion: clarify,
+      });
+      onHandoff?.(h);
+      router.push(handoffThreadPath(h.thread_id));
+      // busy stays set — the router swap unmounts this pane
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
   }
@@ -292,6 +322,14 @@ export function TaskThread({
             (Lane khám phá không governed — chỉ nghiệp vụ đã đăng ký mới được
             niêm phong.)
           </div>
+          <button
+            type="button"
+            onClick={() => void handoff()}
+            disabled={busy}
+            className="mt-2 rounded-md border border-amber-600 bg-white px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:bg-transparent dark:text-amber-200 dark:hover:bg-amber-900/40"
+          >
+            {busy ? "Đang chuyển…" : "Chuyển sang trợ lý tổng quát"}
+          </button>
         </div>
       )}
 

@@ -4,12 +4,18 @@
 // zero upstream file edits. API calls ride the existing /api/:path* rewrite →
 // Gateway /api/ewcp/* → in-process kernel.
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { EwcpError, getRun, type RunView } from "@/ewcp/api";
 import { TaskList } from "@/ewcp/components/task-list";
 import { TaskThread } from "@/ewcp/components/task-thread";
 import { UnverifiedBadge } from "@/ewcp/components/unverified-badge";
+import {
+  handoffThreadPath,
+  readHandoffs,
+  type ExploratoryHandoff,
+} from "@/ewcp/exploratory";
 
 const CREDS_KEY = "ewcp_creds";
 const LAST_RUN_KEY = "ewcp_last_run";
@@ -24,6 +30,24 @@ export default function EwcpPage() {
   });
   const [run, setRun] = useState<RunView | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Exploratory artifacts handed off from this pane (lead_agent threads).
+  // The UNVERIFIED section renders only while these exist — never as
+  // static decoration.
+  const [handoffs, setHandoffs] = useState<ExploratoryHandoff[]>([]);
+  const onHandoff = useCallback((h: ExploratoryHandoff) => {
+    setHandoffs((hs) => [
+      h,
+      ...hs.filter((x) => x.thread_id !== h.thread_id),
+    ]);
+  }, []);
+
+  useEffect(() => {
+    try {
+      setHandoffs(readHandoffs(sessionStorage));
+    } catch {
+      /* private mode */
+    }
+  }, []);
 
   // Single writer for the active run: also persists the id (reload restore)
   // and bumps refreshKey so the history rail reflects the new state.
@@ -199,15 +223,36 @@ export default function EwcpPage() {
           creds={creds}
           run={run}
           onRun={updateRun}
+          onHandoff={onHandoff}
         />
 
-        {/* exploratory-lane demo: UNVERIFIED chrome is dominant by rule */}
-        <section className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            Lane khám phá (không governed)
-          </h2>
-          <UnverifiedBadge />
-        </section>
+        {/* exploratory lane (Q24): UNVERIFIED chrome only while real
+            artifacts handed off from this pane exist — a handed-off
+            thread can never promote, only re-intake through POST /tasks */}
+        {handoffs.length > 0 && (
+          <section className="space-y-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Lane khám phá (không governed)
+            </h2>
+            <UnverifiedBadge />
+            <ul className="space-y-1">
+              {handoffs.map((h) => (
+                <li
+                  key={h.thread_id}
+                  className="flex items-center gap-2 text-xs"
+                >
+                  <Link
+                    href={handoffThreadPath(h.thread_id)}
+                    className="shrink-0 font-mono text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    {h.thread_id.slice(0, 8)}…
+                  </Link>
+                  <span className="truncate text-zinc-500">{h.intent}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         </div>
       </div>
     </div>
