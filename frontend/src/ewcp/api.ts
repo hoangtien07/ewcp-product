@@ -84,6 +84,9 @@ export async function createTask(
     invoicesZip?: File | null;
     books?: File | null;
     dossierZip?: File | null;
+    // kernel honors Idempotency-Key (tenant-scoped) — retries of the same
+    // logical submission reuse the caller's key instead of spawning a second run
+    idempotencyKey?: string;
   },
 ): Promise<TaskResponse & Partial<RunView>> {
   const fd = new FormData();
@@ -96,7 +99,12 @@ export async function createTask(
   if (args.dossierZip) fd.set("dossier_zip", args.dossierZip);
   const res = await fetch(`${API}/tasks`, {
     method: "POST",
-    headers: mutatingHeaders(args.apiKey),
+    headers: {
+      ...mutatingHeaders(args.apiKey),
+      ...(args.idempotencyKey
+        ? { "Idempotency-Key": args.idempotencyKey }
+        : {}),
+    },
     body: fd,
   });
   return parse(res);
@@ -207,6 +215,29 @@ export async function getOutcome(
     headers: authHeaders(args.apiKey),
   });
   return parse(res);
+}
+
+// Bundled sample data — kernel GET /demo/fixtures/{name} (public, no auth).
+export type DemoFixtureName =
+  | "invoices"
+  | "invoices_corrupt"
+  | "books"
+  | "books_corrupt"
+  | "dossier"
+  | "dossier_sea";
+
+export async function fetchDemoFixture(
+  name: DemoFixtureName,
+): Promise<File> {
+  const res = await fetch(`${API}/demo/fixtures/${name}`);
+  if (!res.ok) throw new EwcpError(res.status, await res.text());
+  const blob = await res.blob();
+  const ext = res.headers
+    .get("content-disposition")
+    ?.match(/filename="?([^";]+)"?/)?.[1];
+  return new File([blob], ext ?? `${name}.dat`, {
+    type: blob.type || "application/octet-stream",
+  });
 }
 
 export async function listRuns(
