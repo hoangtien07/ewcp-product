@@ -73,10 +73,13 @@ export default function EwcpPage() {
           return; // credentials not right yet — keep the id, retry on key change
         }
         restoredRef.current = true;
-        try {
-          sessionStorage.removeItem(LAST_RUN_KEY);
-        } catch {
-          /* ignore */
+        // stale failure must not clear a newer selection's saved id
+        if (seq === selectSeq.current) {
+          try {
+            sessionStorage.removeItem(LAST_RUN_KEY);
+          } catch {
+            /* ignore */
+          }
         }
       });
   }, [creds.apiKey, updateRun]);
