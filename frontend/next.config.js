@@ -32,6 +32,14 @@ const config = {
   },
   devIndicators: false,
   allowedDevOrigins: getAllowedDevOrigins(),
+  // EWCP: governed-intake POSTs (/api/ewcp/tasks) block for the whole first
+  // agent attempt, which can reach the kernel's 600s turn cap. The dev proxy
+  // otherwise drops the upstream socket and surfaces a false 500 while the
+  // run completes server-side. 660_000ms = cap + buffer. Hotfix until
+  // general-lane intake becomes async (tracked for post-M-EA4).
+  experimental: {
+    proxyTimeout: 660_000,
+  },
   async rewrites() {
     const rewrites = [];
     const gatewayURL = getInternalServiceURL(
