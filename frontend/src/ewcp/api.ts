@@ -126,6 +126,13 @@ export async function createTask(
   }
   for (const [name, f] of Object.entries(args.files ?? {})) {
     if (f) fd.set(name, f);
+    // general lane declares no input slots — its intake only reads the
+    // fixed `files` key, so a file picked into a pack slot would be
+    // dropped silently when the intent routes outside packs. Post it
+    // under both names: pack intake ignores `files`, general intake
+    // ignores the slot names. A slot literally named `files` must not
+    // be duplicated (spec slots stay single-file).
+    if (f && name !== "files") fd.append("files", f);
   }
   const res = await fetch(`${API}/tasks`, {
     method: "POST",
