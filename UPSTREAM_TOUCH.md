@@ -12,8 +12,11 @@ touch is recorded below. Budget: **≤ 8 files**.
 | # | Upstream file | Change | Why | Date |
 |---|---------------|--------|-----|------|
 | 1 | `frontend/src/components/workspace/workspace-nav-chat-list.tsx` | One `SidebarMenuItem` + `Link` to `/ewcp` (ShieldCheck icon, label "EWCP") at the top of the workspace nav | No surface in the product led to `/ewcp`; sidebar nav is the least invasive entry point matching upstream nav-item style | 2026-10-05 |
+| 2 | `docker/nginx/nginx.conf` | Dedicated `location /api/ewcp` with 660s connect/send/read timeouts | Governed-intake POSTs block for the whole first attempt (600s kernel turn cap); the generic `/api/` catch-all's default 60s read timeout 504s mid-run — false error while the run completes | 2026-10-06 |
+| 3 | `docker/nginx/nginx.local.conf` | Same `/api/ewcp` 660s block for the local-compose proxy | Same defect on the local docker path | 2026-10-06 |
+| 4 | `frontend/next.config.js` | `experimental.proxyTimeout = 660_000` | Next dev proxy dropped the upstream socket (~60s) on a 73s governed intake → false "Internal Server Error"; raises the rewrite proxy ceiling to cap + buffer | 2026-10-06 |
 
-Current count: **1 / 8**.
+Current count: **4 / 8**.
 
 ## Merge-sync policy
 
