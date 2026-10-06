@@ -223,11 +223,18 @@ export function TaskThread({
       if (idemRef.current?.fp !== fp) {
         idemRef.current = { fp, key: crypto.randomUUID() };
       }
+      // post only files whose picker is still visible — when a run is
+      // open the slot row narrows to that run's spec (or vanishes on
+      // general), but `files` still holds picks from the wider intake;
+      // posting them would attach hidden files the fingerprint skipped
+      const visibleFiles = Object.fromEntries(
+        slots.map((s) => [s.name, files[s.name] ?? null]),
+      );
       const res = await createTask({
         intent,
         tenant: creds.tenant,
         apiKey: creds.apiKey,
-        files,
+        files: visibleFiles,
         idempotencyKey: idemRef.current.key,
       });
       if (res.status === "clarify") {

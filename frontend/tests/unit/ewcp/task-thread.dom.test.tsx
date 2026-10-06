@@ -499,4 +499,76 @@ describe("TaskThread general lane", () => {
     expect(postedForm!.get("revision_note")).toBe("đếm rows bỏ header");
     expect(postedForm!.getAll("files")).toHaveLength(0);
   });
+
+  test("a general run hides pack slots but stale picks never attach to a new task", async () => {
+    let taskForm: FormData | null = null;
+    rs.stubGlobal(
+      "fetch",
+      rs.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/ewcp/tasks" && init?.method === "POST") {
+          taskForm = init.body as FormData;
+          return jsonResponse({ status: "running", workrun_id: "wr-next" });
+        }
+        if (url === "/api/ewcp/outcomes") {
+          return jsonResponse([
+            {
+              outcome_type: "invoice_recon",
+              description: "x",
+              required_checks: [],
+              requires_inputs: [
+                {
+                  name: "invoices_zip",
+                  accept: ".zip",
+                  label_vn: "Zip hóa đơn",
+                  required: true,
+                },
+              ],
+            },
+          ]);
+        }
+        return jsonResponse({});
+      }),
+    );
+    const { container, rerender } = render(
+      <TaskThread creds={creds} run={null} onRun={rs.fn()} />,
+    );
+    // pick a pack file on fresh intake, then a general run opens and
+    // hides every pack slot
+    const pick = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    )!;
+    fireEvent.change(pick, {
+      target: { files: [new File(["z"], "hidden.zip")] },
+    });
+    expect(await screen.findByText("hidden.zip")).toBeTruthy();
+    const genRun = {
+      workrun_id: "wr-gen",
+      tenant_id: "demo",
+      outcome_type: "general",
+      status: "verified",
+      step_label: "x",
+      intent: "x",
+      pending_questions: [],
+      deliverables: [],
+      ingest_errors: [],
+      skipped: [],
+    } as RunView;
+    rerender(<TaskThread creds={creds} run={genRun} onRun={rs.fn()} />);
+    // the pack picker is gone; the stale pick is invisible
+    expect(screen.queryByText("hidden.zip")).toBeNull();
+    expect(
+      container.querySelectorAll('input[type="file"]'),
+    ).toHaveLength(0);
+    fireEvent.change(
+      screen.getByPlaceholderText(/Yêu cầu nghiệp vụ/),
+      { target: { value: "yêu cầu mới" } },
+    );
+    fireEvent.click(screen.getByText("Gửi yêu cầu"));
+    await waitFor(() => expect(taskForm).not.toBeNull());
+    // the hidden pick must not ride the new submission
+    expect(taskForm!.get("invoices_zip")).toBeNull();
+    expect(
+      [...taskForm!.entries()].filter(([, v]) => v instanceof File),
+    ).toHaveLength(0);
+  });
 });

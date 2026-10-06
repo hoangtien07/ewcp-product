@@ -33,17 +33,21 @@ export function unionInputs(specs: OutcomeSpecView[]): OutcomeInputSpec[] {
 }
 
 /** Inputs the slot row should show: the active run's own spec (ask-back
- * only ever wants that pack's slots); the union for a fresh request.
- * A selected run whose outcome_type the registry doesn't declare (the
- * general lane registers no spec) gets NO slots — unioning pack slots
- * there would offer fields the kernel's general intake rejects. */
+ * only ever wants that pack's slots); the union for a fresh request or
+ * a pack run the registry doesn't know — the kernel's pack intake
+ * accepts the union of ALL specs' input names, so the union is the
+ * correct fallback there. The general lane alone gets NO slots: its
+ * intake takes only the fixed `files` key + revision_note, and a pack
+ * slot name would post a field the kernel general rejects (422). */
 export function inputsFor(
   specs: OutcomeSpecView[],
   outcomeType?: string,
 ): OutcomeInputSpec[] {
+  if (outcomeType === "general") return [];
   if (outcomeType === undefined) return unionInputs(specs);
   return (
-    specs.find((s) => s.outcome_type === outcomeType)?.requires_inputs ?? []
+    specs.find((s) => s.outcome_type === outcomeType)?.requires_inputs ??
+    unionInputs(specs)
   );
 }
 
