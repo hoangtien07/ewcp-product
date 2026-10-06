@@ -38,6 +38,11 @@ export interface RunView {
   // pack-owned counters from spec.summarize (run_summary.json) — the
   // pane renders them generically, keyed by count name not outcome_type
   counts?: Record<string, number | undefined>;
+  // kernel _run_view merges TaskRequest.context back in — the general
+  // lane projects its TaskState/contract summary under context.general
+  // (spec 005 §2.4; the exact sub-shape is still merging kernel-side —
+  // consumers read defensively)
+  context?: Record<string, unknown>;
   decision?: { answer: string; decided_by: string };
   error?: string;
 }
@@ -47,6 +52,11 @@ export interface TaskResponse {
   clarify_question?: string;
   router_via?: string;
   workrun_id?: string;
+  // spec 005 AC1 — clarify payload carries false when no foundation
+  // port is wired; when the general lane exists the kernel routes
+  // unmatched intents to it directly (a clarify then means genuinely
+  // ambiguous intent, not a dead end)
+  assist_available?: boolean;
 }
 
 export interface VerifyResult {

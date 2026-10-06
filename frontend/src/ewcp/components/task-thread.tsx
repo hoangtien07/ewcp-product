@@ -25,7 +25,12 @@ import {
   handoffToGeneralLane,
   type ExploratoryHandoff,
 } from "@/ewcp/exploratory";
-import { formatCounts, outcomeLabel, statusLabel } from "@/ewcp/labels";
+import {
+  deliverableKindLabel,
+  formatCounts,
+  outcomeLabel,
+  statusLabel,
+} from "@/ewcp/labels";
 import {
   bindPresets,
   FALLBACK_SPECS,
@@ -35,6 +40,7 @@ import {
 } from "@/ewcp/registry";
 
 import { DecisionCard } from "./decision-card";
+import { GeneralCard } from "./general-card";
 import { ManifestCard } from "./manifest-card";
 import { PackGallery } from "./pack-gallery";
 import { StudioCard } from "./studio-card";
@@ -96,6 +102,11 @@ export function TaskThread({
   // degrading (a wrong/expired key otherwise looks like missing packs)
   const [specsLive, setSpecsLive] = useState(false);
   const [clarify, setClarify] = useState<string | null>(null);
+  // kernel clarify payload flag (spec 005 AC1): false = no governed
+  // general lane on this kernel -> exploratory handoff stays the only
+  // route; true = the lane exists and the kernel will route unmatched
+  // intents itself, so the card's note explains this clarify instead
+  const [clarifyAssist, setClarifyAssist] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -216,6 +227,7 @@ export function TaskThread({
       });
       if (res.status === "clarify") {
         setClarify(res.clarify_question ?? "Chưa rõ yêu cầu.");
+        setClarifyAssist(res.assist_available === true);
         onRun(null);
       } else {
         onRun(res as RunView);
@@ -411,8 +423,9 @@ export function TaskThread({
         <div className="rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           <b>Hệ thống cần rõ hơn:</b> {clarify}
           <div className="mt-1 text-xs opacity-80">
-            (Lane khám phá không governed — chỉ nghiệp vụ đã đăng ký mới được
-            niêm phong.)
+            {clarifyAssist
+              ? "(Kernel đã có lane tổng quát governed đã sẵn sàng — yêu cầu nêu rõ đầu ra mong muốn sẽ được route trực tiếp. Handoff khám phá vẫn không niêm phong.)"
+              : "(Lane khám phá không governed — chỉ nghiệp vụ đã đăng ký mới được niêm phong.)"}
           </div>
           <button
             type="button"
@@ -524,7 +537,10 @@ export function TaskThread({
                     className="flex items-center gap-2 font-mono text-xs"
                   >
                     <span className="flex-1">
-                      {d.name || d.uri} ·{" "}
+                      {d.name || d.uri}{" "}
+                      <span className="rounded bg-zinc-100 px-1.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                        {deliverableKindLabel(d.kind)}
+                      </span>{" "}
                       <span className="text-zinc-400">
                         {d.sha256.slice(0, 12)}…
                       </span>
@@ -551,6 +567,11 @@ export function TaskThread({
                 ))}
               </ul>
             </div>
+          )}
+
+          {/* general lane — TaskState/contract projection + outcome JSON */}
+          {run.outcome_type === "general" && (
+            <GeneralCard run={run} apiKey={creds.apiKey} />
           )}
 
           {/* studio surface — outcome-rich view fed by /outcome */}

@@ -47,6 +47,65 @@ def test_forward_returns_503_when_kernel_absent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_load_kernel_offers_foundation_port_when_supported(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Kernel merged the spec-005 create_app kwargs -> port is wired."""
+    import types
+
+    captured: dict = {}
+    fake_app = FastAPI()
+
+    def create_app(*, store_dir, work_dir, foundation_port=None, foundation_cfg=None):
+        captured.update(
+            store_dir=store_dir,
+            work_dir=work_dir,
+            foundation_port=foundation_port,
+            foundation_cfg=foundation_cfg,
+        )
+        return fake_app
+
+    for name in ("ewcp", "ewcp.api"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    mod = types.ModuleType("ewcp.api.app")
+    mod.create_app = create_app
+    monkeypatch.setitem(sys.modules, "ewcp.api.app", mod)
+
+    service = EwcpKernelService(config={"data_dir": str(tmp_path)})
+    service._load_kernel()
+    assert service.kernel_loaded is True
+    assert captured["store_dir"] == tmp_path / "ewcp" / "store"
+    assert captured["foundation_port"] is service._foundation_port
+    assert "foundation_cfg" in captured
+    status = service.status()
+    assert status["general_lane"]["wired"] is True
+
+
+@pytest.mark.asyncio
+async def test_load_kernel_omits_foundation_kwargs_on_old_kernel(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Kernel without the foundation_port kwargs -> degrade cleanly."""
+    import types
+
+    captured: dict = {}
+    fake_app = FastAPI()
+
+    def create_app(*, store_dir, work_dir):
+        captured.update(store_dir=store_dir, work_dir=work_dir)
+        return fake_app
+
+    for name in ("ewcp", "ewcp.api"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    mod = types.ModuleType("ewcp.api.app")
+    mod.create_app = create_app
+    monkeypatch.setitem(sys.modules, "ewcp.api.app", mod)
+
+    service = EwcpKernelService(config={"data_dir": str(tmp_path)})
+    service._load_kernel()
+    assert service.kernel_loaded is True
+    assert "foundation_port" not in captured
+    assert service._foundation_port is None
+    assert service.status()["general_lane"]["wired"] is False
+
+
+@pytest.mark.asyncio
 async def test_forward_reaches_mounted_kernel_app() -> None:
     """When a kernel-like ASGI app is mounted, requests are forwarded."""
     kernel = FastAPI()
