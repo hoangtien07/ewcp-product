@@ -49,6 +49,12 @@ from langchain.agents.middleware import AgentMiddleware
 logger = logging.getLogger(__name__)
 
 EWCP_AGENT_NAME = "ewcp-general"
+
+# M-EA3: the lane's default model profile — a `use:`-class profile in
+# config.yaml pointing at ewcp_packs.governed_model.GovernedChatModel.
+# An unset turn model resolves here so a governed run can never fall
+# back to a direct-provider profile by default.
+EWCP_GOVERNED_MODEL_NAME = "ewcp-governed"
 # config.yaml tool groups the lane may assemble — the sandbox file/bash
 # tool set. Web/browser/knowledge/conversation tools stay out.
 EWCP_TOOL_GROUPS = ("file:read", "file:write", "bash")
@@ -152,6 +158,11 @@ class EwcpDeerFlowClient(DeerFlowClient):
         cfg = super()._get_runnable_config(thread_id, **overrides)
         cfg["configurable"]["non_interactive"] = True
         cfg["configurable"]["max_total_subagents"] = 0
+        # M-EA3: the WorkRun's LLM virtual key rides the same channel as
+        # model_name — GovernedChatModel resolves it via ensure_config()
+        key = overrides.get("ewcp_model_key")
+        if key:
+            cfg["configurable"]["ewcp_model_key"] = key
         return cfg
 
 
@@ -288,7 +299,7 @@ class DeerFlowPortImpl:
         self._lock = threading.Lock()
         self._turns: dict[str, Any] = {}
 
-    # spec §2.5 signature
+    # spec §2.5 signature (+ M-EA3 virtual_key)
     def turn(
         self,
         *,
@@ -298,13 +309,18 @@ class DeerFlowPortImpl:
         workspace: Path,
         model: str | None,
         timeout_s: float,
+        virtual_key: str | None = None,
     ) -> TurnResult:
         # `workspace` is informational — the harness derives the same
         # user-data root from (thread_id, user_id) via config/paths.py.
         logger.debug("ewcp turn start thread=%s user=%s workspace=%s", thread_id, user_id, workspace)
         kwargs: dict[str, Any] = {"user_id": user_id, "is_internal": True}
-        if model:
-            kwargs["model_name"] = model
+        # invariant 7: unset model resolves the governed profile — a
+        # turn without a virtual key still lands on GovernedChatModel,
+        # which denies before any provider call (fail-closed)
+        kwargs["model_name"] = model or EWCP_GOVERNED_MODEL_NAME
+        if virtual_key:
+            kwargs["ewcp_model_key"] = virtual_key
         gen = self._client.stream(message, thread_id=thread_id, **kwargs)
 
         deadline = time.monotonic() + timeout_s

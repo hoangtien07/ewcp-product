@@ -44,6 +44,14 @@ export interface RunView {
   // TaskRequest.context instead, so consumers read general first and
   // fall back to context.general defensively
   general?: Record<string, unknown>;
+  // M-EA3: ledgered LLM spend under the lane's virtual key —
+  // {tokens, usd, calls, cap_usd?}; cap only when a broker is wired
+  spend?: {
+    tokens?: number;
+    usd?: number;
+    calls?: number;
+    cap_usd?: number;
+  };
   context?: Record<string, unknown>;
   decision?: { answer: string; decided_by: string };
   error?: string;

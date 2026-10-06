@@ -102,7 +102,10 @@ class TestTurn:
         assert call["thread_id"] == "ewcp-w1"
         assert call["user_id"] == "ewcp-t1"
         assert call["is_internal"] is True
-        assert "model_name" not in call
+        # invariant 7: an unset model resolves the governed profile —
+        # never a direct-provider default
+        assert call["model_name"] == "ewcp-governed"
+        assert "ewcp_model_key" not in call  # no key minted => absent
 
     def test_model_override_forwarded(self) -> None:
         port, client = _port(_StubClient([_ev("end", {"usage": {}})]))
@@ -115,6 +118,21 @@ class TestTurn:
             timeout_s=10,
         )
         assert client.calls[0]["model_name"] == "strong-model"
+
+    def test_virtual_key_forwarded_to_config(self) -> None:
+        port, client = _port(_StubClient([_ev("end", {"usage": {}})]))
+        port.turn(
+            thread_id="ewcp-w2b",
+            user_id="ewcp-t1",
+            message="go",
+            workspace=Path("/tmp/ws"),
+            model=None,
+            timeout_s=10,
+            virtual_key="vk-w2b-deadbeef",
+        )
+        call = client.calls[0]
+        assert call["ewcp_model_key"] == "vk-w2b-deadbeef"
+        assert call["model_name"] == "ewcp-governed"
 
     def test_timeout_closes_generator(self) -> None:
         def endless():
@@ -304,6 +322,18 @@ class TestFlags:
         cfg = client._get_runnable_config("ewcp-w9")
         assert cfg["configurable"]["non_interactive"] is True
         assert cfg["configurable"]["max_total_subagents"] == 0
+        assert "ewcp_model_key" not in cfg["configurable"]
+
+    def test_runnable_config_stamps_virtual_key(self) -> None:
+        from ewcp_packs.foundation_port import EwcpDeerFlowClient
+
+        client = EwcpDeerFlowClient.__new__(EwcpDeerFlowClient)
+        client._model_name = None
+        client._thinking_enabled = True
+        client._subagent_enabled = False
+        client._plan_mode = False
+        cfg = client._get_runnable_config("ewcp-w9", ewcp_model_key="vk-w9-cafe")
+        assert cfg["configurable"]["ewcp_model_key"] == "vk-w9-cafe"
 
 
 class TestAgentProfile:

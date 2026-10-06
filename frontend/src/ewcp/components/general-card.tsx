@@ -139,6 +139,20 @@ export function GeneralCard({
           Lane tổng quát
         </span>
         <span className="flex items-center gap-1.5">
+          {run.spend?.usd != null && (
+            <span
+              className="rounded-full bg-emerald-50 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+              title={`${run.spend.calls ?? 0} LLM call qua gateway`}
+            >
+              ${run.spend.usd.toFixed(4)}
+              {run.spend.cap_usd != null
+                ? ` / $${run.spend.cap_usd.toFixed(2)}`
+                : ""}
+              {run.spend.tokens != null
+                ? ` · ${run.spend.tokens.toLocaleString()} tok`
+                : ""}
+            </span>
+          )}
           {phase && (
             <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
               {phase === "plan" ? "đề xuất tiêu chí" : phase === "execute" ? "đang thực thi" : phase}

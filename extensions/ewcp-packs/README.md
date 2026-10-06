@@ -40,3 +40,39 @@ Deployment notes (operator, config.yaml is gitignored):
 - The lane tool set is fixed in code (`file:read`, `file:write`, `bash`;
   no MCP/subagents/clarification) — the embedded client subclass
   `EwcpDeerFlowClient` enforces it regardless of config.yaml tool_groups.
+
+## Model governance (M-EA3 / invariant 7)
+
+Every paid model call in the lane rides the kernel `ModelBroker`
+(LLMGateway → BudgetGuard $-cap) under a per-WorkRun virtual key minted
+as `vk-<wid>-<hex>` by the kernel executor. The virtual key reaches the
+agent loop via `turn(virtual_key=…)` → `stream(ewcp_model_key=…)` →
+`configurable.ewcp_model_key`, where `GovernedChatModel`
+(`ewcp_packs.governed_model`) resolves it. The adapter is fail-closed:
+missing key or missing broker raises `ModelGovernanceError` **before**
+any provider wire call — an ungoverned turn produces no LLM traffic.
+
+Operator config (`config.yaml`, gitignored — add manually):
+
+```yaml
+models:
+  - name: ewcp-governed
+    use: ewcp_packs.governed_model:GovernedChatModel
+    model: gemini-3.1-flash-lite   # wire model the kernel client calls
+```
+
+- Unset turn `model` resolves `ewcp-governed` by default, so a governed
+  run can never fall back to a direct-provider profile. An explicit
+  model name still forwards (operator override); when the profile is
+  absent `create_chat_model` raises — fail-closed.
+- Kernel env: `EWCP_LLM_API_KEY` (required for the broker to wire),
+  `EWCP_FOUNDATION_BUDGET_USD` (cap per WorkRun, default 2.0),
+  `EWCP_FOUNDATION_MAX_OUTPUT_TOKENS` (default 8192),
+  `EWCP_FOUNDATION_TOKEN_USD_PER_MTOK` (price map for `$`).
+- `GET /api/ewcp/_status` → `general_lane.model_governance`
+  reports `governed_profile` + `broker` booleans.
+- Gemini 3.x `thoughtSignature` replay: the adapter stores the verbatim
+  assistant payload under `AIMessage.additional_kwargs["ewcp_model_response"]`
+  and re-emits it on the next call (plus honors the
+  `__gemini_function_call_thought_signatures__` map produced by
+  `ChatGoogleGenerativeAI`).
