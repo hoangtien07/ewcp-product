@@ -36,6 +36,7 @@ NOT forward ``non_interactive``/``disable_clarification`` — only
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections.abc import MutableMapping
@@ -82,6 +83,15 @@ def load_foundation_cfg() -> Any | None:
         from ewcp.foundation.port import FoundationConfig
     except Exception:  # noqa: BLE001
         return None
+    # The kernel builds workspaces as {base}/users/ewcp-<tenant>/threads/
+    # ewcp-<wid>/user-data — this MUST resolve to the harness user-data
+    # root (sandbox tools map /mnt/user-data/ there) or the agent's
+    # outbox/uploads/outputs land in a directory the kernel never sees.
+    # Default it to the dir that owns the harness users/ tree; an
+    # explicit env override still wins.
+    from deerflow.config.paths import get_paths
+
+    os.environ.setdefault("EWCP_FOUNDATION_WORKSPACE_BASE", str(get_paths().base_dir))
     try:
         return FoundationConfig.from_env()
     except AttributeError:
@@ -170,10 +180,28 @@ and sends instructions with each turn; follow them exactly.
 
 Rules that always hold, whatever the turn says:
 
+- The file tools only accept absolute virtual paths under
+  `/mnt/user-data/`. Kernel workspace paths map like this:
+    - `ewcp/<x>`  -> `/mnt/user-data/workspace/ewcp/<x>`
+      (outbox envelopes, state.json, inbox, catalog, capabilities)
+    - `uploads/<f>` -> `/mnt/user-data/uploads/<f>`  (read-only inputs)
+    - `outputs/<f>` -> `/mnt/user-data/outputs/<f>`  (deliverables)
+  Bare or relative paths (`ewcp/outbox/001-...`) are rejected — always
+  write the full `/mnt/user-data/...` path.
 - Talk to the kernel ONLY by writing JSON envelopes at
-  `ewcp/outbox/<NNN>-<type>.json` (types: propose_contract, ask_human,
-  invoke_capability, declare_done). Never claim completion in prose —
-  declare_done is the only completion signal the kernel accepts.
+  `ewcp/outbox/<NNN>-<type>.json`. Every envelope MUST have exactly this
+  shape — top-level `id`, `type`, `payload`, nothing else:
+  `{"id": "001", "type": "propose_contract", "payload": {"criteria": [
+    {"id": "rows", "kind": "row_count",
+     "params": {"path": "0000-data.csv", "base": "uploads", "min": 1},
+     "required": true, "label": "..."}]}}`
+  Valid types: propose_contract, ask_human, invoke_capability,
+  declare_done. Criterion `params.path` is a RELATIVE name under
+  `params.base` — `"uploads"` for user inputs, `"outputs"` (the
+  default when base is omitted) for deliverables, `"workspace"` for
+  workspace files. Never an absolute host path. Never claim
+  completion in prose — declare_done is the only completion signal
+  the kernel accepts.
 - Keep `ewcp/state.json` current (goal, plan steps, facts, open
   questions) — it is your memory across attempts.
 - Put every deliverable under `outputs/` and declare each in the
@@ -309,6 +337,7 @@ class DeerFlowPortImpl:
                 stop_reason="end",
             )
         except Exception as exc:  # noqa: BLE001 — error is the wire value
+            logger.warning("ewcp turn raised %s: %s", type(exc).__name__, exc)
             return TurnResult(
                 final_text=_final_text(chunks, last_id),
                 usage=_usage(usage),

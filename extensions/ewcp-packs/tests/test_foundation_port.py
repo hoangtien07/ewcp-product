@@ -8,6 +8,7 @@ each attempt = one ``client.stream()`` turn consumed to exhaustion.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 import types
@@ -347,3 +348,45 @@ class TestKernelTypes:
             assert cfg is None
         else:
             assert cfg is not None
+
+    def test_workspace_base_defaults_to_harness_users_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The kernel resolves workspaces as {base}/users/<u>/threads/<t>/
+        user-data — must land on the same dir the sandbox tools map to
+        /mnt/user-data/, or outbox envelopes vanish."""
+        try:
+            import ewcp.foundation.port  # noqa: F401
+        except ImportError:
+            pytest.skip("kernel foundation module not merged")
+        monkeypatch.delenv("EWCP_FOUNDATION_WORKSPACE_BASE", raising=False)
+        from deerflow.config.paths import get_paths
+
+        cfg = load_foundation_cfg()
+        assert cfg is not None
+        expected = str(get_paths().base_dir)
+        assert os.environ["EWCP_FOUNDATION_WORKSPACE_BASE"] == expected
+        assert getattr(cfg, "workspace_base", None) in (expected, None)
+
+    def test_workspace_base_env_override_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EWCP_FOUNDATION_WORKSPACE_BASE", "/custom/ws")
+        load_foundation_cfg()
+        assert os.environ["EWCP_FOUNDATION_WORKSPACE_BASE"] == "/custom/ws"
+
+
+class TestSoulContract:
+    """The kernel prompt names workspace-relative paths, but sandbox file
+    tools only accept absolute /mnt/user-data/ paths, and envelopes must
+    be {id,type,payload} — the SOUL must pin both or the agent loops."""
+
+    def test_soul_maps_virtual_paths(self) -> None:
+        from ewcp_packs.foundation_port import _EWCP_SOUL_MD
+
+        assert "/mnt/user-data/workspace/" in _EWCP_SOUL_MD
+        assert "/mnt/user-data/uploads/" in _EWCP_SOUL_MD
+        assert "/mnt/user-data/outputs/" in _EWCP_SOUL_MD
+
+    def test_soul_pins_envelope_shape(self) -> None:
+        from ewcp_packs.foundation_port import _EWCP_SOUL_MD
+
+        assert '"type": "propose_contract"' in _EWCP_SOUL_MD
+        assert '"payload"' in _EWCP_SOUL_MD
+        assert '"base": "uploads"' in _EWCP_SOUL_MD

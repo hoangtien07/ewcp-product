@@ -38,10 +38,12 @@ export interface RunView {
   // pack-owned counters from spec.summarize (run_summary.json) — the
   // pane renders them generically, keyed by count name not outcome_type
   counts?: Record<string, number | undefined>;
-  // kernel _run_view merges TaskRequest.context back in — the general
-  // lane projects its TaskState/contract summary under context.general
-  // (spec 005 §2.4; the exact sub-shape is still merging kernel-side —
-  // consumers read defensively)
+  // kernel _run_view emits the general lane's bookkeeping verbatim as a
+  // TOP-LEVEL `general` key (phase, attempt, contract_version,
+  // state_warnings, rejections — spec 005 §2.4); older kernels merged
+  // TaskRequest.context instead, so consumers read general first and
+  // fall back to context.general defensively
+  general?: Record<string, unknown>;
   context?: Record<string, unknown>;
   decision?: { answer: string; decided_by: string };
   error?: string;
@@ -136,12 +138,23 @@ export async function supplyInputs(
     tenant: string;
     apiKey: string;
     files?: Record<string, File | null>;
+    // general lane declares no input slots — files go under the fixed
+    // `files` multipart key, and a contract revision rides the
+    // `revision_note` form field (kernel 422s when both are empty)
+    generalFiles?: File[];
+    revisionNote?: string;
   },
 ): Promise<RunView> {
   const fd = new FormData();
   fd.set("tenant_id", args.tenant);
   for (const [name, f] of Object.entries(args.files ?? {})) {
     if (f) fd.set(name, f);
+  }
+  for (const f of args.generalFiles ?? []) {
+    fd.append("files", f);
+  }
+  if (args.revisionNote?.trim()) {
+    fd.set("revision_note", args.revisionNote.trim());
   }
   const res = await fetch(`${API}/tasks/${workrunId}/inputs`, {
     method: "POST",

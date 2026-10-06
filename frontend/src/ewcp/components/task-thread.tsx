@@ -94,6 +94,11 @@ export function TaskThread({
   // file slots keyed by the spec's declared multipart field names
   // (requires_inputs[].name) — the registry decides which exist
   const [files, setFiles] = useState<Record<string, File | null>>({});
+  // general lane declares no slots — missing_input on a general run
+  // takes arbitrary files under the fixed `files` multipart key plus
+  // an optional contract revision note (kernel supply_inputs contract)
+  const [generalFiles, setGeneralFiles] = useState<File[]>([]);
+  const [revisionNote, setRevisionNote] = useState("");
   // pack registry from GET /outcomes — FALLBACK_SPECS keeps the pane
   // working against kernels that predate the registry endpoint
   const [specs, setSpecs] = useState<OutcomeSpecView[]>(FALLBACK_SPECS);
@@ -265,14 +270,19 @@ export function TaskThread({
     setBusy(true);
     setErr(null);
     try {
+      const isGeneral = run.outcome_type === "general";
       onRun(
         await supplyInputs(run.workrun_id, {
           tenant: creds.tenant,
           apiKey: creds.apiKey,
-          files,
+          ...(isGeneral
+            ? { generalFiles, revisionNote }
+            : { files }),
         }),
       );
       setFiles({});
+      setGeneralFiles([]);
+      setRevisionNote("");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -306,6 +316,8 @@ export function TaskThread({
   const awaitingFiles =
     run?.status === "awaiting_input" &&
     run.pending_questions.some((q) => q.kind === "missing_input");
+  const generalAwaiting =
+    awaitingFiles && run?.outcome_type === "general";
   const askBack =
     run?.pending_questions.filter((q) => q.kind !== "missing_input") ?? [];
   // candidate_complete = attempt signaled done awaiting seal decision;
@@ -359,6 +371,22 @@ export function TaskThread({
             />
           ))}
         </div>
+        {generalAwaiting && (
+          <div className="mt-2 space-y-2">
+            <FileSlot
+              label="File bổ sung cho agent"
+              file={generalFiles[0] ?? null}
+              onPick={(f) => setGeneralFiles(f ? [f] : [])}
+            />
+            <textarea
+              value={revisionNote}
+              onChange={(e) => setRevisionNote(e.target.value)}
+              rows={2}
+              placeholder="Ghi chú sửa tiêu chí nghiệm thu (tuỳ chọn) — kernel gửi lại agent như revision_note"
+              className="w-full resize-y rounded-md border border-zinc-300 bg-transparent p-2 text-sm dark:border-zinc-600"
+            />
+          </div>
+        )}
         {presets.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
             <span className="text-zinc-500">Dữ liệu mẫu:</span>
@@ -379,10 +407,19 @@ export function TaskThread({
           {awaitingFiles ? (
             <button
               onClick={sendInputs}
-              disabled={busy || !Object.values(files).some(Boolean)}
+              disabled={
+                busy ||
+                (generalAwaiting
+                  ? generalFiles.length === 0 && !revisionNote.trim()
+                  : !Object.values(files).some(Boolean))
+              }
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {busy ? "Đang gửi…" : "Gửi file bổ sung"}
+              {busy
+                ? "Đang gửi…"
+                : generalAwaiting
+                  ? "Gửi cho agent"
+                  : "Gửi file bổ sung"}
             </button>
           ) : (
             <button

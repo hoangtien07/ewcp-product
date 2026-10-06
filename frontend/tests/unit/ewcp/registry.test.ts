@@ -85,10 +85,13 @@ describe("ewcp registry — spec-driven pane mapping", () => {
     expect(
       inputsFor(specs, "dossier_check").map((i) => i.name),
     ).toEqual(["dossier_zip"]);
+    // fresh intake (no run selected) shows the union of all pack slots
     expect(inputsFor(specs).map((i) => i.name)).toHaveLength(3);
-    expect(inputsFor(specs, "unregistered").map((i) => i.name)).toHaveLength(
-      3,
-    );
+    // a selected run whose outcome_type the registry doesn't declare —
+    // the general lane — gets no slots (its intake is the free `files`
+    // key + revision_note, not spec slot names)
+    expect(inputsFor(specs, "general")).toEqual([]);
+    expect(inputsFor(specs, "unregistered")).toEqual([]);
   });
 
   test("bindPresets only exposes demos for registered packs", () => {
