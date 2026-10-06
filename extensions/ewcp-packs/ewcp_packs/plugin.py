@@ -16,8 +16,11 @@ import os
 from pathlib import Path
 
 import httpx
+import inspect
 from deerflow_extension_api import ExtensionRuntimeDeps
 from fastapi import APIRouter, Request, Response
+
+from .foundation_port import DeerFlowPortImpl, load_foundation_cfg
 
 _FORWARDED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
@@ -51,6 +54,7 @@ class EwcpKernelService:
         self._client: httpx.AsyncClient | None = None
         self._kernel_app: Any = None
         self._lifespan_cm: Any = None
+        self._foundation_port: Any = None  # wired only when create_app accepts it
 
     async def start(self, deps: ExtensionRuntimeDeps) -> None:
         self._load_kernel()
@@ -75,10 +79,23 @@ class EwcpKernelService:
             self.kernel_loaded = False
             return
         home = Path(self.config.get("data_dir") or os.environ.get("DEER_FLOW_HOME", ".deer-flow")) / "ewcp"
-        self._kernel_app = create_app(
-            store_dir=home / "store",
-            work_dir=home / "work",
-        )
+        kwargs: dict[str, Any] = {
+            "store_dir": home / "store",
+            "work_dir": home / "work",
+        }
+        # RECONCILE (spec 005 §2.5): the kernel-side create_app gains
+        # foundation_port/foundation_cfg params when the general lane merges.
+        # Gate on the signature so this extension works against both kernel
+        # builds — the port is constructed eagerly so the kernel's signature
+        # accepting it is the only switch needed.
+        if "foundation_port" in inspect.signature(create_app).parameters:
+            try:
+                self._foundation_port = DeerFlowPortImpl()
+                kwargs["foundation_port"] = self._foundation_port
+                kwargs["foundation_cfg"] = load_foundation_cfg()
+            except Exception as exc:  # noqa: BLE001 — a bad client must not kill the pack mount
+                self.kernel_error = f"foundation_port init: {type(exc).__name__}: {exc}"
+        self._kernel_app = create_app(**kwargs)
         transport = httpx.ASGITransport(app=self._kernel_app)
         self._client = httpx.AsyncClient(
             transport=transport,
@@ -92,6 +109,7 @@ class EwcpKernelService:
             "extension": "ewcp_packs",
             "kernel_loaded": self.kernel_loaded,
             "kernel_error": self.kernel_error,
+            "general_lane": {"wired": self._foundation_port is not None},
         }
 
     async def forward(self, request: Request, path: str) -> Response:
@@ -135,7 +153,16 @@ def build_router(service: EwcpKernelService) -> APIRouter:
     async def ewcp_status() -> dict[str, Any]:
         return service.status()
 
-    @router.api_route("/{path:path}", methods=list(_FORWARDED_METHODS))
+    # include_in_schema=False: one catch-all api_route fans out to every
+    # kernel endpoint — FastAPI mints a single operation_id for all its
+    # methods, which trips the gateway's duplicate-operation-id check.
+    # A wildcard proxy can't describe the kernel surface anyway; /_status
+    # stays documented.
+    @router.api_route(
+        "/{path:path}",
+        methods=list(_FORWARDED_METHODS),
+        include_in_schema=False,
+    )
     async def ewcp_forward(path: str, request: Request) -> Response:
         return await service.forward(request, path)
 

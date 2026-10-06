@@ -99,6 +99,59 @@ describe("TaskThread clarify handoff", () => {
     );
     expect(handoffs.at(0)?.thread_id).toBe(threadId);
   });
+
+  test("clarify with assist_available:false keeps the exploratory note", async () => {
+    rs.stubGlobal(
+      "fetch",
+      rs.fn(async (url: string) => {
+        if (url === "/api/ewcp/tasks") {
+          return jsonResponse({
+            status: "clarify",
+            clarify_question: "Kỳ nào?",
+            assist_available: false,
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+    render(<TaskThread creds={creds} run={null} onRun={rs.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/Yêu cầu nghiệp vụ/), {
+      target: { value: "đối soát hóa đơn" },
+    });
+    fireEvent.click(screen.getByText("Gửi yêu cầu"));
+    expect(
+      await screen.findByText(/Lane khám phá không governed/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/lane tổng quát governed/i)).toBeNull();
+    // the exploratory handoff button is still offered
+    expect(
+      screen.getByText("Chuyển sang trợ lý tổng quát"),
+    ).toBeTruthy();
+  });
+
+  test("clarify with assist_available:true notes the governed lane exists", async () => {
+    rs.stubGlobal(
+      "fetch",
+      rs.fn(async (url: string) => {
+        if (url === "/api/ewcp/tasks") {
+          return jsonResponse({
+            status: "clarify",
+            clarify_question: "Kỳ nào?",
+            assist_available: true,
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+    render(<TaskThread creds={creds} run={null} onRun={rs.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/Yêu cầu nghiệp vụ/), {
+      target: { value: "đối soát hóa đơn" },
+    });
+    fireEvent.click(screen.getByText("Gửi yêu cầu"));
+    expect(
+      await screen.findByText(/lane tổng quát governed đã sẵn sàng/i),
+    ).toBeTruthy();
+  });
 });
 
 describe("TaskThread spec-driven intake", () => {
@@ -278,5 +331,73 @@ describe("TaskThread spec-driven intake", () => {
     expect(await screen.findByText("inv.zip")).toBeTruthy();
     // dossier pick was cleared — its slot shows the placeholder again
     expect(screen.queryByText("dossier.zip")).toBeNull();
+  });
+});
+
+describe("TaskThread general lane", () => {
+  test("a general run renders the lane card and contract_approval question", async () => {
+    rs.stubGlobal(
+      "fetch",
+      rs.fn(async () => jsonResponse({})),
+    );
+    const run = {
+      workrun_id: "wr-gen",
+      tenant_id: "demo",
+      outcome_type: "general",
+      status: "awaiting_input",
+      step_label: "Chờ duyệt tiêu chí",
+      intent: "sửa workbook",
+      thread_id: "ewcp-wr-gen",
+      context: { general: { goal: "sửa workbook" } },
+      pending_questions: [
+        {
+          decision_id: "d-c1",
+          kind: "contract_approval",
+          prompt: "Agent đề xuất tiêu chí nghiệm thu:\n- c1: file tồn tại",
+          options: ["approve_contract", "revise_contract"],
+          options_v2: [
+            { id: "approve_contract", label: "Duyệt tiêu chí & chạy tiếp" },
+            { id: "revise_contract", label: "Yêu cầu sửa tiêu chí" },
+          ],
+        },
+      ],
+      deliverables: [],
+      ingest_errors: [],
+      skipped: [],
+    } as RunView;
+    render(<TaskThread creds={creds} run={run} onRun={rs.fn()} />);
+    expect(await screen.findByText("Lane tổng quát")).toBeTruthy();
+    expect(screen.getByText("Duyệt tiêu chí nghiệm thu")).toBeTruthy();
+    expect(screen.getByText("Duyệt tiêu chí & chạy tiếp")).toBeTruthy();
+  });
+
+  test("deliverable rows expose the deliverable kind chip", async () => {
+    rs.stubGlobal(
+      "fetch",
+      rs.fn(async () => jsonResponse({})),
+    );
+    const run = {
+      workrun_id: "wr-gen",
+      tenant_id: "demo",
+      outcome_type: "general",
+      status: "verified",
+      step_label: "x",
+      intent: "x",
+      pending_questions: [],
+      deliverables: [
+        {
+          deliverable_id: "d1",
+          kind: "contract",
+          sha256: "abcdef0123456789",
+          uri: "outputs/contract.json",
+          name: "contract.json",
+        },
+      ],
+      ingest_errors: [],
+      skipped: [],
+    } as RunView;
+    render(<TaskThread creds={creds} run={run} onRun={rs.fn()} />);
+    expect(await screen.findByText("contract.json")).toBeTruthy();
+    expect(screen.getByText("hợp đồng nghiệm thu")).toBeTruthy();
   });
 });

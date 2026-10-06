@@ -132,6 +132,39 @@ describe("DecisionCard", () => {
     expect(body.answer).toBe("giữ nguyên và trình duyệt");
   });
 
+  test("contract_approval kind renders and posts approve_contract id", async () => {
+    const calls = fetchCalls();
+    render(
+      <DecisionCard
+        q={{
+          decision_id: "d-c1",
+          kind: "contract_approval",
+          prompt:
+            "Agent đề xuất tiêu chí nghiệm thu:\n- c1: file tồn tại",
+          options: ["approve_contract", "revise_contract"],
+          options_v2: [
+            { id: "approve_contract", label: "Duyệt tiêu chí & chạy tiếp" },
+            { id: "revise_contract", label: "Yêu cầu sửa tiêu chí" },
+          ],
+        }}
+        run={run}
+        creds={creds}
+        onDone={rs.fn()}
+      />,
+    );
+    expect(screen.getByText("Duyệt tiêu chí nghiệm thu")).toBeTruthy();
+    const approveBtn = screen
+      .getByText("Duyệt tiêu chí & chạy tiếp")
+      .closest("button")!;
+    // approve-family styling (emerald), not the neutral zinc button
+    expect(approveBtn.className).toContain("emerald");
+    fireEvent.click(approveBtn);
+    await waitFor(() => expect(calls).toHaveLength(1));
+    const body = JSON.parse(calls.at(0)?.init?.body as string);
+    expect(body.answer).toBe("approve_contract");
+    expect(body.decision_id).toBe("d-c1");
+  });
+
   test("disabledHint keeps buttons inert and shows the hint (409 guard)", () => {
     const fetchSpy = rs.fn();
     rs.stubGlobal("fetch", fetchSpy);

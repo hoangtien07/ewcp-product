@@ -24,6 +24,10 @@ export const DECISION_LABEL: Record<string, string> = {
   approve: "Duyệt & niêm phong",
   reject: "Từ chối",
   request_changes: "Yêu cầu sửa",
+  // spec 005 §7.3 contract_approval options — bare ids on the legacy
+  // `options` path (options_v2 already ships VN labels verbatim)
+  approve_contract: "Duyệt tiêu chí & chạy tiếp",
+  revise_contract: "Yêu cầu sửa tiêu chí",
 };
 
 // RunView.outcome_type → Vietnamese surface name (history rail, gallery).
@@ -34,6 +38,15 @@ export const OUTCOME_LABEL: Record<string, string> = {
   dossier_check: "Kiểm tra chứng từ",
   three_way_match: "Đối chiếu 3 chiều",
   bank_recon: "Đối chiếu sao kê ngân hàng",
+  general: "Lane tổng quát",
+};
+
+// Deliverable.kind → Vietnamese chip in the workspace deliverables list.
+// contract = the kernel-written acceptance-contract copy harvested as a
+// deliverable (spec 005 §8); unknown kinds pass through verbatim.
+export const DELIVERABLE_KIND_LABEL: Record<string, string> = {
+  contract: "hợp đồng nghiệm thu",
+  result: "kết quả",
 };
 
 // RunView.counts keys → Vietnamese unit names. The wire carries whatever
@@ -112,6 +125,10 @@ export function decisionLabel(answer: string): string {
 
 export function outcomeLabel(outcomeType: string): string {
   return OUTCOME_LABEL[outcomeType] ?? outcomeType;
+}
+
+export function deliverableKindLabel(kind: string): string {
+  return DELIVERABLE_KIND_LABEL[kind] ?? kind;
 }
 
 export function reconStatusLabel(status: string): string {

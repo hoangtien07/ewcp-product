@@ -19,6 +19,9 @@ const KIND_LABEL: Record<string, string> = {
   confirm_value: "Xác nhận giá trị bất thường",
   approval: "Phê duyệt kết quả",
   missing_input: "Cần bổ sung đầu vào",
+  // spec 005 §7.3 — general lane proposes the AcceptanceContract, the
+  // operator approves/revises it before execution continues
+  contract_approval: "Duyệt tiêu chí nghiệm thu",
 };
 
 export function DecisionCard({
@@ -96,7 +99,7 @@ export function DecisionCard({
             disabled={busy !== null || disabledHint !== undefined}
             onClick={() => void submit(opt.id)}
             className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
-              opt.id === "approve"
+              opt.id === "approve" || opt.id === "approve_contract"
                 ? "bg-emerald-600 text-white hover:bg-emerald-700"
                 : opt.id === "reject"
                   ? "bg-red-600 text-white hover:bg-red-700"

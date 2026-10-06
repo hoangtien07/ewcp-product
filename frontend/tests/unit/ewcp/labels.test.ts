@@ -24,6 +24,18 @@ describe("ewcp labels — kernel enum → Vietnamese", () => {
     expect(decisionLabel("approve")).toBe("Duyệt & niêm phong");
   });
 
+  test("contract-approval answers map to spec-005 vocabulary", () => {
+    // spec 005 §7.3 — contract_approval options (approve_contract /
+    // revise_contract) arrive as bare ids on the legacy `options` path
+    expect(DECISION_LABEL.approve_contract).toBe(
+      "Duyệt tiêu chí & chạy tiếp",
+    );
+    expect(DECISION_LABEL.revise_contract).toBe("Yêu cầu sửa tiêu chí");
+    expect(decisionLabel("approve_contract")).toBe(
+      "Duyệt tiêu chí & chạy tiếp",
+    );
+  });
+
   test("every kernel TaskStatus has a Vietnamese label", () => {
     // kernel TaskStatus enum (src/ewcp/kernel/models.py)
     const kernelStatuses = [
@@ -49,6 +61,7 @@ describe("ewcp labels — kernel enum → Vietnamese", () => {
     expect(outcomeLabel("invoice_recon")).toBe("Đối soát hóa đơn");
     expect(outcomeLabel("dossier_check")).toBe("Kiểm tra chứng từ");
     expect(outcomeLabel("three_way_match")).toBe("Đối chiếu 3 chiều");
+    expect(outcomeLabel("general")).toBe("Lane tổng quát");
   });
 
   test("every kernel ReconStatus has a Vietnamese chip label", () => {

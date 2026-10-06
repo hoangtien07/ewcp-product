@@ -16,6 +16,10 @@ Planned surfaces (workspace-council studio archaeology — commodity only):
   upload result (PASS/FAIL + failing file name).
 - `UnverifiedBadge` — badge dominating all artifact chrome on exploratory
   (non-governed) artifacts; provenance ≠ verification (Perplexity trap).
+- `GeneralCard` — governed general lane (spec 005): renders the
+  `context.general` TaskState/contract projection + the outcome JSON;
+  `contract_approval` pending questions render through `DecisionCard`
+  (`approve_contract` / `revise_contract` option ids post verbatim).
 - `DossierViewer` — doc-viewer + form panel for chứng từ dossier (pdf.js).
 - `ReconGrid` — đối soát grid (rows = chứng từ, cols = checks, per-cell
   citation + status + user-override-wins) — Harvey/Hebbia-lite pattern.
