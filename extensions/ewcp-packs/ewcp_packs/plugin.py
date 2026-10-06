@@ -109,8 +109,35 @@ class EwcpKernelService:
             "extension": "ewcp_packs",
             "kernel_loaded": self.kernel_loaded,
             "kernel_error": self.kernel_error,
-            "general_lane": {"wired": self._foundation_port is not None},
+            "general_lane": {
+                "wired": self._foundation_port is not None,
+                # M-EA3 observability: governed profile present in
+                # config.yaml + live kernel broker — both required for
+                # the lane to make any model call at all
+                "model_governance": self._governance_status(),
+            },
         }
+
+    @staticmethod
+    def _governance_status() -> dict[str, Any]:
+        governed = False
+        try:
+            from deerflow.config.app_config import get_app_config
+
+            from ewcp_packs.foundation_port import EWCP_GOVERNED_MODEL_NAME
+
+            mc = get_app_config().get_model_config(EWCP_GOVERNED_MODEL_NAME)
+            governed = bool(mc and "governed_model" in (mc.use or ""))
+        except Exception:  # noqa: BLE001 — status must never raise
+            pass
+        broker = False
+        try:
+            from ewcp.runtime.model_broker import get_broker
+
+            broker = get_broker() is not None
+        except Exception:  # noqa: BLE001
+            pass
+        return {"governed_profile": governed, "broker": broker}
 
     async def forward(self, request: Request, path: str) -> Response:
         if self._client is None:
