@@ -10,10 +10,11 @@ import {
 import type { RunView } from "@/ewcp/api";
 import { GeneralCard } from "@/ewcp/components/general-card";
 
-// M-EA1 general lane — the card surfaces the kernel-exposed
-// context.general projection (TaskState §6) plus the outcome JSON the
-// sealed spec serves. All fields are optional: the kernel-side shape is
-// still merging (RECONCILE), so the card renders whatever is present.
+// M-EA1 general lane — the card surfaces the kernel-exposed TOP-LEVEL
+// `run.general` projection (phase, attempt, contract_version,
+// state_warnings, rejections — spec 005 §2.4) plus the outcome JSON the
+// sealed spec serves. Pre-merge spec text placed the projection under
+// context.general — the card reads that as a defensive fallback.
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -41,6 +42,31 @@ afterEach(() => {
 });
 
 describe("GeneralCard", () => {
+  test("renders the kernel wire shape — top-level general with flat fields", () => {
+    // kernel _run_view emits run.general verbatim: phase, attempt,
+    // contract_version, state_warnings, rejections — NOT context.general
+    const run = {
+      ...baseRun,
+      general: {
+        phase: "execute",
+        attempt: 2,
+        contract_version: 1,
+        state_warnings: ["state.json thiếu trường plan"],
+        rejections: [
+          { path: "ewcp/outbox/999-bad.json", reason: "absolute path" },
+        ],
+      },
+    } as RunView;
+    render(<GeneralCard run={run} apiKey="" />);
+    expect(screen.getByText("Lane tổng quát")).toBeTruthy();
+    expect(screen.getByText(/đang thực thi/)).toBeTruthy();
+    expect(screen.getByText(/lượt 2/)).toBeTruthy();
+    expect(screen.getByText(/Tiêu chí nghiệm thu v1/)).toBeTruthy();
+    expect(screen.getByText(/đã duyệt/)).toBeTruthy();
+    expect(screen.getByText(/state\.json thiếu trường plan/)).toBeTruthy();
+    expect(screen.getByText(/999-bad\.json/)).toBeTruthy();
+  });
+
   test("renders the TaskState projection from context.general", () => {
     const run = {
       ...baseRun,

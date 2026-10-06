@@ -33,16 +33,18 @@ export function unionInputs(specs: OutcomeSpecView[]): OutcomeInputSpec[] {
 }
 
 /** Inputs the slot row should show: the active run's own spec (ask-back
- * only ever wants that pack's slots); the union for a fresh request or an
- * outcome type the registry doesn't know. */
+ * only ever wants that pack's slots); the union for a fresh request.
+ * A selected run whose outcome_type the registry doesn't declare (the
+ * general lane registers no spec) gets NO slots — unioning pack slots
+ * there would offer fields the kernel's general intake rejects. */
 export function inputsFor(
   specs: OutcomeSpecView[],
   outcomeType?: string,
 ): OutcomeInputSpec[] {
-  const spec = outcomeType
-    ? specs.find((s) => s.outcome_type === outcomeType)
-    : undefined;
-  return spec ? spec.requires_inputs : unionInputs(specs);
+  if (outcomeType === undefined) return unionInputs(specs);
+  return (
+    specs.find((s) => s.outcome_type === outcomeType)?.requires_inputs ?? []
+  );
 }
 
 export interface DemoPreset {

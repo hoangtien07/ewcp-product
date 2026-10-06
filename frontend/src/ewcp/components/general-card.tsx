@@ -29,7 +29,20 @@ interface ContractSummary {
   approved_by?: string | null;
 }
 
+interface Rejection {
+  path?: string;
+  reason?: string;
+}
+
 interface GeneralContext {
+  // kernel emits these flat keys (spec 005 §2.4 wire shape)
+  phase?: string; // "plan" | "execute"
+  attempt?: number;
+  contract_version?: number;
+  state_warnings?: string[];
+  rejections?: Rejection[];
+  revision_note?: string;
+  // spec-text TaskState projection fields — kernel may merge later
   goal?: string | { statement?: string };
   plan?: PlanStep[];
   facts?: Fact[];
@@ -68,7 +81,10 @@ export function GeneralCard({
   const [outcome, setOutcome] = useState<unknown>(null);
   const [outcomeReady, setOutcomeReady] = useState(false);
 
-  const general = asGeneralContext(run.context?.general);
+  // kernel _run_view emits `general` as a TOP-LEVEL run key; the
+  // pre-merge spec text placed it under context.general — prefer the
+  // live wire, keep the fallback for older kernels
+  const general = asGeneralContext(run.general ?? run.context?.general);
   const deliverableKey = run.deliverables
     .map((d) => `${d.deliverable_id}:${d.sha256}`)
     .join(",");
@@ -103,28 +119,49 @@ export function GeneralCard({
   const facts = general?.facts?.filter((f) => f?.k) ?? [];
   const openQuestions = general?.open_questions?.filter(Boolean) ?? [];
   const blockers = general?.blockers?.filter(Boolean) ?? [];
-  const contract = general?.contract;
+  // kernel emits contract_version flat; older/spec shape may nest a
+  // `contract` summary object — prefer whichever exists
+  const contract =
+    general?.contract ??
+    (general?.contract_version != null
+      ? { version: general.contract_version }
+      : undefined);
+  const phase = general?.phase;
+  const attempt = general?.attempt;
+  const warnings =
+    general?.state_warnings?.filter((w) => typeof w === "string") ?? [];
+  const rejections = general?.rejections?.filter((r) => r?.path) ?? [];
 
   return (
     <div className="rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
           Lane tổng quát
         </span>
-        {contract && (
-          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-            Tiêu chí nghiệm thu
-            {contract.version ? ` v${contract.version}` : ""}
-            {contract.criteria_count
-              ? ` · ${contract.criteria_count} tiêu chí`
-              : ""}
-            {contract.approved_by
-              ? " · đã duyệt"
-              : contract.proposed_by
-                ? ` · đề xuất bởi ${contract.proposed_by}`
+        <span className="flex items-center gap-1.5">
+          {phase && (
+            <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              {phase === "plan" ? "đề xuất tiêu chí" : phase === "execute" ? "đang thực thi" : phase}
+              {attempt ? ` · lượt ${attempt}` : ""}
+            </span>
+          )}
+          {contract && (
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+              Tiêu chí nghiệm thu
+              {contract.version ? ` v${contract.version}` : ""}
+              {contract.criteria_count
+                ? ` · ${contract.criteria_count} tiêu chí`
                 : ""}
-          </span>
-        )}
+              {contract.approved_by
+                ? " · đã duyệt"
+                : phase === "execute"
+                  ? " · đã duyệt"
+                  : contract.proposed_by
+                    ? ` · đề xuất bởi ${contract.proposed_by}`
+                    : ""}
+            </span>
+          )}
+        </span>
       </div>
 
       {goal && <p className="mt-1.5 text-sm font-medium">{goal}</p>}
@@ -165,6 +202,25 @@ export function GeneralCard({
         <ul className="mt-2 list-disc pl-5 text-xs text-red-600 dark:text-red-400">
           {blockers.map((b, i) => (
             <li key={i}>{b}</li>
+          ))}
+        </ul>
+      )}
+
+      {rejections.length > 0 && (
+        <ul className="mt-2 list-disc pl-5 text-xs text-red-600 dark:text-red-400">
+          {rejections.map((r, i) => (
+            <li key={i}>
+              Kernel bỏ qua <code className="font-mono">{r.path}</code>
+              {r.reason ? `: ${r.reason}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {warnings.length > 0 && (
+        <ul className="mt-2 list-disc pl-5 text-xs text-amber-700 dark:text-amber-300">
+          {warnings.map((w, i) => (
+            <li key={i}>{w}</li>
           ))}
         </ul>
       )}

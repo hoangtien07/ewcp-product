@@ -400,4 +400,103 @@ describe("TaskThread general lane", () => {
     expect(await screen.findByText("contract.json")).toBeTruthy();
     expect(screen.getByText("hợp đồng nghiệm thu")).toBeTruthy();
   });
+
+  test("general missing_input posts files under `files` + revision_note", async () => {
+    let postedForm: FormData | null = null;
+    rs.stubGlobal(
+      "fetch",
+      rs.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/ewcp/tasks/wr-gen/inputs") {
+          postedForm = init?.body as FormData;
+          return jsonResponse({
+            workrun_id: "wr-gen",
+            status: "running",
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+    const run = {
+      workrun_id: "wr-gen",
+      tenant_id: "demo",
+      outcome_type: "general",
+      status: "awaiting_input",
+      step_label: "x",
+      intent: "tổng hợp csv",
+      pending_questions: [
+        {
+          decision_id: "d-mi",
+          kind: "missing_input",
+          prompt: "Cần file dữ liệu thêm",
+          options: ["provided"],
+        },
+      ],
+      deliverables: [],
+      ingest_errors: [],
+      skipped: [],
+    } as RunView;
+    const { container } = render(
+      <TaskThread creds={creds} run={run} onRun={rs.fn()} />,
+    );
+    const fileInput =
+      container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(["csv"], "extra.csv")] },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText(/Ghi chú sửa tiêu chí/),
+      { target: { value: "thêm tiêu chí tổng" } },
+    );
+    fireEvent.click(screen.getByText("Gửi cho agent"));
+    await waitFor(() => expect(postedForm).not.toBeNull());
+    expect(postedForm!.getAll("files").map((f) => (f as File).name)).toEqual(
+      ["extra.csv"],
+    );
+    expect(postedForm!.get("revision_note")).toBe("thêm tiêu chí tổng");
+  });
+
+  test("general missing_input sends revision_note alone (no file needed)", async () => {
+    let postedForm: FormData | null = null;
+    rs.stubGlobal(
+      "fetch",
+      rs.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/ewcp/tasks/wr-gen/inputs") {
+          postedForm = init?.body as FormData;
+          return jsonResponse({ workrun_id: "wr-gen", status: "running" });
+        }
+        return jsonResponse({});
+      }),
+    );
+    const run = {
+      workrun_id: "wr-gen",
+      tenant_id: "demo",
+      outcome_type: "general",
+      status: "awaiting_input",
+      step_label: "x",
+      intent: "tổng hợp csv",
+      pending_questions: [
+        {
+          decision_id: "d-mi",
+          kind: "missing_input",
+          prompt: "Cần thêm đầu vào",
+          options: ["provided"],
+        },
+      ],
+      deliverables: [],
+      ingest_errors: [],
+      skipped: [],
+    } as RunView;
+    render(<TaskThread creds={creds} run={run} onRun={rs.fn()} />);
+    // button disabled until a file or a note exists — kernel 422s on empty
+    const btn = screen.getByText("Gửi cho agent");
+    expect(btn.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(
+      screen.getByPlaceholderText(/Ghi chú sửa tiêu chí/),
+      { target: { value: "đếm rows bỏ header" } },
+    );
+    fireEvent.click(btn);
+    await waitFor(() => expect(postedForm).not.toBeNull());
+    expect(postedForm!.get("revision_note")).toBe("đếm rows bỏ header");
+    expect(postedForm!.getAll("files")).toHaveLength(0);
+  });
 });
