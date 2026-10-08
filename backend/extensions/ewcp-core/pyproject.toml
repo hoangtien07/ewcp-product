@@ -1,0 +1,46 @@
+[project]
+name = "ewcp-core"
+version = "0.1.0"
+description = "EWCP Product Core — HTTP client for the EWCP kernel service (A3)"
+readme = "README.md"
+requires-python = ">=3.12"
+# The EWCP kernel is a SEPARATE HTTP service (repo
+# enterprise-work-control-plane), reached via httpx only — it is
+# deliberately NOT a Python dependency here (Option A+: no in-process
+# kernel mount). Wire contract: kernel `src/ewcp/api/app.py` @ main.
+dependencies = [
+    "deerflow-extension-api>=0.2,<0.3",
+    "fastapi>=0.115.0,<1",
+    "httpx>=0.28,<1",
+]
+
+[project.entry-points."deerflow.extensions"]
+ewcp_core = "ewcp_core:install"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9,<10",
+    "pytest-asyncio>=1.3,<2",
+    "ruff>=0.14,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ewcp_core"]
+
+[tool.ruff]
+line-length = 240
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ewcp_core"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
