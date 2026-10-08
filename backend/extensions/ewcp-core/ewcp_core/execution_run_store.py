@@ -231,6 +231,14 @@ class ExecutionRunStore:
             rows = (await session.execute(sa.select(_EXECUTION_RUNS).where(_EXECUTION_RUNS.c.created_by == created_by).order_by(_EXECUTION_RUNS.c.created_at.desc()).limit(limit))).all()
         return [_row_to_record(r) for r in rows]
 
+    async def list_for_thread(self, thread_id: str, *, limit: int = 50) -> list[ExecutionRunRecord]:
+        """All map rows on one thread, newest first — the dup-start guard's
+        open-run check filters these by status at the call site so the open
+        set stays owned by the lifecycle code, not duplicated in SQL."""
+        async with self._sf() as session:
+            rows = (await session.execute(sa.select(_EXECUTION_RUNS).where(_EXECUTION_RUNS.c.thread_id == thread_id).order_by(_EXECUTION_RUNS.c.created_at.desc()).limit(limit))).all()
+        return [_row_to_record(r) for r in rows]
+
 
 __all__ = [
     "TABLE_PREFIX",
