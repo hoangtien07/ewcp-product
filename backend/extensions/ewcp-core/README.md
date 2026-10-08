@@ -27,6 +27,9 @@ skeleton + `kernel_client.py` for the EWCP kernel reached **over HTTP**
   product DB: extension-owned table `ewcp_execution_runs` (private
   `MetaData`, `table_prefix: ewcp_`), created inside
   `ExtensionService.start()` via `deps.session_factory`.
+- `ewcp_core/egress_policy.py` — `EgressPolicy` per-tenant/run egress
+  enforcement (A3 Task 4): model + tool middleware hooks plus the
+  sandbox-net capability gate, fail-closed.
 
 ## Wiring (`config.yaml`)
 
@@ -48,6 +51,15 @@ plugins:
       kernel_api_key: ...                 # M2M key — prefer env instead
       timeout_seconds: 30                 # optional
       read_max_attempts: 3                # optional, GET retry bound
+      egress:                             # optional — A3 Task 4
+        default_mode: local_only          # local_only | restricted | approved_cloud
+        tenant_modes: {}                  # {tenant_id: mode}
+        tenant_classes: {}                # {tenant_id: sensitive|non_sensitive}
+        local_model_endpoints: []         # extra in-boundary model hosts
+        allowed_model_endpoints: []       # restricted: reachable model hosts
+        approved_model_endpoints: []      # approved_cloud: reachable model hosts
+        allowed_domains: []               # restricted: tool destinations (*.x.com ok)
+        allowed_tools: []                 # restricted: operator-vouched egress tools
 ```
 
 **Env-first config:** `EWCP_KERNEL_URL` / `EWCP_KERNEL_API_KEY`
@@ -55,6 +67,13 @@ override the `config:` keys. Prefer env for the API key so the secret
 never sits in a config file. The key is sent only as the
 `X-Ewcp-Api-Key` request header — never in URLs, logs, or the status
 payload.
+
+Egress env overrides (all beat `egress:`): `EWCP_EGRESS_DEFAULT_MODE`,
+`EWCP_EGRESS_TENANT_MODES` (`t1=restricted,t2=approved_cloud`),
+`EWCP_TENANT_DATA_CLASS` (kernel format `t=class,...`),
+`EWCP_EGRESS_LOCAL_MODEL_ENDPOINTS`, `EWCP_EGRESS_ALLOWED_MODEL_ENDPOINTS`,
+`EWCP_EGRESS_APPROVED_MODEL_ENDPOINTS`, `EWCP_EGRESS_ALLOWED_DOMAINS`,
+`EWCP_EGRESS_ALLOWED_TOOLS` (comma lists).
 
 Install: `make extension-install SOURCE=backend/extensions/ewcp-core`
 (from repo root) or `cd backend && uv run deerflow extensions install
@@ -74,11 +93,38 @@ extensions/ewcp-core`. Restart Gateway after any mutation.
 - **`POST /workruns/{id}/decisions`**: never retried — the kernel
   exposes no idempotency contract on this endpoint.
 
+## Egress policy (Task 4)
+
+Three channels, three real hooks:
+
+- **Model** — `MODEL_PHYSICAL` middleware inspects the resolved model's
+  endpoint host per physical call. Denial returns an `AIMessage` refusal
+  carrying `additional_kwargs["ewcp_egress_deny"]`.
+- **Tool** — `TOOL_RAW` middleware allows/denies adjacent to the
+  callable. Denial returns an error `ToolMessage`.
+- **Sandbox-net** — not a middleware seam: capability-evaluated from
+  `runtime.context["app_config"].sandbox` at `abefore_agent`. Only
+  `AioSandboxProvider` (`sandbox.network.mode: isolated|allowlist`) or
+  `LocalSandboxProvider` with `allow_host_bash: false` satisfy
+  `local_only`/`restricted`; anything else fails the run
+  (`EgressDeniedError`, a `GraphBubbleUp`).
+
+Modes: `local_only` (model endpoint must be loopback/private/declared;
+no egress-capable tools; sandbox isolated or no-egress-path),
+`restricted` (endpoints/tools bounded by allowlists; sandbox isolated
+or allowlist+`approval: deny`), `approved_cloud` (endpoints must be in
+`approved_model_endpoints`; tools unrestricted). Tenants resolve from
+`runtime.context["ewcp_tenant_id"]` falling back to `user_id`;
+`ewcp_egress_mode` context overrides per-run. Unknown tenants are
+`sensitive` under `default_mode` (fail-closed). `non_sensitive` tenants
+— built-in `demo`/`default` plus `tenant_classes` — run unmodified,
+matching kernel `DataEgressPolicy` semantics.
+
 ## Status
 
 `GET /api/ewcp/_status` →
 `{extension, kernel_url, kernel_configured, api_key_configured,
-client_started, store_started}`. Reports `kernel_configured: false`
+client_started, store_started, egress}`. Reports `kernel_configured: false`
 instead of failing Gateway startup when no kernel URL is set.
 
 ## ExecutionRunMap persistence (Ruling)
