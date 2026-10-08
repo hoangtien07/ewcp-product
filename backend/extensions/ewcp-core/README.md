@@ -11,8 +11,22 @@ skeleton + `kernel_client.py` for the EWCP kernel reached **over HTTP**
   covering the kernel's real wire surface:
   `POST /tasks`, `POST /workruns/{id}/decisions`, `GET /workruns/{id}`,
   `GET /verify/{manifest_hash}`, `GET /outcomes`.
-- `ewcp_core/plugin.py` — `EwcpCoreService` (owns the shared client for
-  the Gateway lifetime) + `GET /api/ewcp/_status`.
+- `ewcp_core/plugin.py` — `EwcpCoreService` (owns the shared client +
+  ExecutionRunMap launcher for the Gateway lifetime) +
+  `GET /api/ewcp/_status`.
+- `ewcp_core/run_launcher.py` — `RunLauncher.launch(intent, mode)`:
+  `agent_runs.for_plugin("ewcp.core")` → `create_thread` → uploads
+  (BEFORE `start`, through `POST /api/threads/{id}/uploads` via an
+  injected `ThreadUploads`) → `start(input, idempotency_key)` →
+  ExecutionRunMap row. Includes the Gateway SSE observation-route
+  constants, the `FileInMessage` input contract (`additional_kwargs.
+  files`), `pending_interrupt != completed` projection, and
+  crash-resume replay (same thread + same key converges through the
+  host's `extension:{ns}:{key}` dedupe).
+- `ewcp_core/execution_run_store.py` — ExecutionRunMap on the SHARED
+  product DB: extension-owned table `ewcp_execution_runs` (private
+  `MetaData`, `table_prefix: ewcp_`), created inside
+  `ExtensionService.start()` via `deps.session_factory`.
 
 ## Wiring (`config.yaml`)
 
@@ -26,6 +40,9 @@ plugins:
     use: ewcp_core:install
     enabled: true
     required: false
+    table_prefix: ewcp_           # REQUIRED: declares ownership of ewcp_*
+                                 # tables so host autogenerate never
+                                 # proposes dropping them
     config:
       kernel_url: http://127.0.0.1:8080   # kernel service base URL
       kernel_api_key: ...                 # M2M key — prefer env instead
@@ -60,9 +77,53 @@ extensions/ewcp-core`. Restart Gateway after any mutation.
 ## Status
 
 `GET /api/ewcp/_status` →
-`{extension, kernel_url, kernel_configured, api_key_configured, client_started}`.
-Reports `kernel_configured: false` instead of failing Gateway startup
-when no kernel URL is set.
+`{extension, kernel_url, kernel_configured, api_key_configured,
+client_started, store_started}`. Reports `kernel_configured: false`
+instead of failing Gateway startup when no kernel URL is set.
+
+## ExecutionRunMap persistence (Ruling)
+
+The plan pointed at `backend/app/gateway/persistence` — that path does
+not exist on `product/vnext`. The documented convention for
+extension-owned tables (persistence migrations guide) applies instead:
+private `MetaData` + `table_prefix: ewcp_` declared on the `plugins:`
+record + schema bootstrap inside `ExtensionService.start()` against
+`deps.session_factory`. The table lives in the SAME database as the
+host (this is the "shared product persistence" the plan requires —
+NOT a private SQLite file like `examples/deerflow-extension-agent-
+teams`' store). `table_prefix` is operator config (gitignored
+`config.yaml`), so it is documented here, not committed.
+
+Schema versioning: v0.1 uses idempotent `create_all` (Postgres
+advisory-locked). When columns first need to *change*, an
+extension-owned alembic chain (`version_table="ewcp_alembic_version"`)
+per the migrations convention replaces it.
+
+## ExecutionRun launch semantics
+
+- `launch(intent, mode)` is admission-side: it creates the product
+  thread + run via the bound `AgentRuns` handle and projects one
+  `ewcp_execution_runs` row (`thread_id` / `run_id` / `workrun_id`
+  nullable / `task_mode` / `status` / `idempotency_key` /
+  `created_by`).
+- Durable dedupe is owner-scoped `(created_by, idempotency_key)`: a
+  replayed launch returns the stored row — no new thread, no new run.
+  Same key + different intent/mode → `LaunchConflict`.
+- The row is inserted BEFORE `start()` so a crash mid-launch retains
+  ownership: a retry with `run_id IS NULL` re-issues `start` on the
+  SAME thread with the SAME key, where the host's global
+  `extension:{ns}:{key}` dedupe converges to the same run instead of
+  erroring on a thread mismatch.
+- `pending_interrupt != completed`: `refresh()` consults
+  `get_state()` for ended runs (`success`/`interrupted`) — pending
+  interrupts/`next` project to `pending_interrupt`, never
+  `completed`.
+- Observation is Gateway SSE only — `RUN_STREAM_PATH`,
+  `RUN_JOIN_PATH`, `RUN_STREAM_EXISTING_PATH` constants; AgentRuns is
+  NOT used for streaming.
+- `on_disconnect="continue"` is applied by the host bound impl
+  (`extension_agent_runs.py:142`) on every admission path; there is no
+  interface parameter to pass.
 
 ## Tests
 
