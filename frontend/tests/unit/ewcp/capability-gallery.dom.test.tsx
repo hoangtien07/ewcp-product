@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, rs, test } from "@rstest/core";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import type { OutcomeSpecView } from "@/ewcp/api";
 import { CapabilityGallery } from "@/ewcp/components/capability-gallery";
@@ -43,9 +38,7 @@ describe("CapabilityGallery", () => {
     render(
       <CapabilityGallery specs={[recon]} busy={false} onIntent={onIntent} />,
     );
-    fireEvent.click(
-      screen.getByText(/Kiểm tra hóa đơn đầu vào kỳ 09\/2025/),
-    );
+    fireEvent.click(screen.getByText(/Kiểm tra hóa đơn đầu vào kỳ 09\/2025/));
     expect(onIntent).toHaveBeenCalledTimes(1);
   });
 
@@ -65,7 +58,11 @@ describe("CapabilityGallery", () => {
       requires_inputs: [],
     };
     render(
-      <CapabilityGallery specs={[recon, bank]} busy={false} onIntent={rs.fn()} />,
+      <CapabilityGallery
+        specs={[recon, bank]}
+        busy={false}
+        onIntent={rs.fn()}
+      />,
     );
     expect(screen.queryByText(/Sắp có/)).toBeNull();
   });

@@ -36,10 +36,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname.startsWith("/workspace/ewcp")}
             asChild
           >
-            <Link
-              className="text-muted-foreground"
-              href="/workspace/ewcp-runs"
-            >
+            <Link className="text-muted-foreground" href="/workspace/ewcp-runs">
               <ShieldCheckIcon />
               <span>EWCP</span>
             </Link>

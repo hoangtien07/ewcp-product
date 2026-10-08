@@ -27,9 +27,7 @@ describe("ewcp labels — kernel enum → Vietnamese", () => {
   test("contract-approval answers map to spec-005 vocabulary", () => {
     // spec 005 §7.3 — contract_approval options (approve_contract /
     // revise_contract) arrive as bare ids on the legacy `options` path
-    expect(DECISION_LABEL.approve_contract).toBe(
-      "Duyệt tiêu chí & chạy tiếp",
-    );
+    expect(DECISION_LABEL.approve_contract).toBe("Duyệt tiêu chí & chạy tiếp");
     expect(DECISION_LABEL.revise_contract).toBe("Yêu cầu sửa tiêu chí");
     expect(decisionLabel("approve_contract")).toBe(
       "Duyệt tiêu chí & chạy tiếp",
@@ -99,10 +97,7 @@ describe("ewcp labels — kernel enum → Vietnamese", () => {
       "NEEDS_REVIEW",
     ];
     for (const s of kernelMatchStatuses) {
-      expect(
-        THREE_WAY_STATUS_LABEL[s],
-        `missing label for ${s}`,
-      ).toBeTruthy();
+      expect(THREE_WAY_STATUS_LABEL[s], `missing label for ${s}`).toBeTruthy();
     }
     expect(threeWayStatusLabel("PRICE_VARIANCE")).toBe("Lệch đơn giá");
     expect(threeWayStatusLabel("NO_PO")).toBe("Không có PO");
@@ -141,9 +136,9 @@ describe("ewcp labels — kernel enum → Vietnamese", () => {
     );
     expect(formatCounts({ docs: 7 })).toBe("7 chứng từ");
     // three_way_match emits n_pos/n_receipts/n_invoices verbatim
-    expect(
-      formatCounts({ n_pos: 11, n_receipts: 9, n_invoices: 12 }),
-    ).toBe("11 PO · 9 phiếu nhận · 12 hóa đơn");
+    expect(formatCounts({ n_pos: 11, n_receipts: 9, n_invoices: 12 })).toBe(
+      "11 PO · 9 phiếu nhận · 12 hóa đơn",
+    );
     expect(formatCounts({ future_key: 2 })).toBe("2 future_key");
     expect(formatCounts({})).toBe("");
   });

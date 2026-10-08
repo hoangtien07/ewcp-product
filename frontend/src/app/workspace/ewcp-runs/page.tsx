@@ -78,11 +78,7 @@ export default function EwcpRunsPage() {
             {err && <p className="text-xs text-red-600">{err}</p>}
           </div>
         </div>
-        <CapabilityGallery
-          specs={specs}
-          busy={busy}
-          onIntent={setIntent}
-        />
+        <CapabilityGallery specs={specs} busy={busy} onIntent={setIntent} />
         {activeId && <ExecutionRunThread executionRunId={activeId} />}
       </main>
     </div>

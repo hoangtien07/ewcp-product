@@ -69,7 +69,7 @@ export function ShareVerifyLink({ manifestHash }: { manifestHash: string }) {
         key.
       </p>
       {state === "failed" && (
-        <p className="break-all font-mono text-xs text-zinc-500">
+        <p className="font-mono text-xs break-all text-zinc-500">
           Copy thủ công: {url}
         </p>
       )}

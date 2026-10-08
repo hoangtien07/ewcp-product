@@ -270,8 +270,8 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
       </div>
       <div className="flex items-center justify-between text-xs text-zinc-500">
         <span>
-          {matched.length}/{rows.length} dòng khớp · {exceptions.length}{" "}
-          ngoại lệ
+          {matched.length}/{rows.length} dòng khớp · {exceptions.length} ngoại
+          lệ
         </span>
         {context && <span className="font-mono">{context}</span>}
       </div>
@@ -300,8 +300,8 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
                     )}
                   </div>
                   <p className="mt-0.5 text-xs text-zinc-500">
-                    đặt {qty(r.ordered_qty)} · nhận{" "}
-                    {qty(r.received_qty)} · HĐ {qty(r.invoiced_qty)}
+                    đặt {qty(r.ordered_qty)} · nhận {qty(r.received_qty)} · HĐ{" "}
+                    {qty(r.invoiced_qty)}
                     {r.invoiced_amount &&
                       ` — ${r.invoiced_amount}` +
                         (r.currency ? ` ${r.currency}` : "")}
@@ -347,9 +347,7 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
                       <span className="font-mono text-xs">{r.source}</span>
                     </div>
                     {r.detail && (
-                      <p className="mt-0.5 text-xs text-zinc-500">
-                        {r.detail}
-                      </p>
+                      <p className="mt-0.5 text-xs text-zinc-500">{r.detail}</p>
                     )}
                   </li>
                 ))}

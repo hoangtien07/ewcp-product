@@ -15,11 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import {
-  submitDecision,
-  type PendingQuestion,
-  type RunView,
-} from "@/ewcp/api";
+import { submitDecision, type PendingQuestion, type RunView } from "@/ewcp/api";
 import { decisionLabel } from "@/ewcp/labels";
 
 const KIND_LABEL: Record<string, string> = {

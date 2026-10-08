@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, rs, test } from "@rstest/core";
-import {
-  cleanup,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
 import type { RunView } from "@/ewcp/api";
 import { StudioCard } from "@/ewcp/components/studio-card";
@@ -70,9 +65,7 @@ describe("StudioCard", () => {
       }),
     );
     render(<StudioCard run={runWith([DEL])} executionRunId="er-1" />);
-    await waitFor(() =>
-      expect(screen.getByText(/Bảng đối soát/)).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText(/Bảng đối soát/)).toBeTruthy());
     expect(calls[0]).toBe("/api/ewcp/runs/er-1/outcome");
     expect(screen.getByText(/1\/1 khớp/)).toBeTruthy();
   });

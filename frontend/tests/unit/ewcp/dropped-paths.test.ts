@@ -29,16 +29,12 @@ function frontendSources(): string[] {
 }
 
 function violations(pattern: RegExp): string[] {
-  return frontendSources().filter((f) =>
-    pattern.test(readFileSync(f, "utf8")),
-  );
+  return frontendSources().filter((f) => pattern.test(readFileSync(f, "utf8")));
 }
 
 describe("dropped /ewcp pane paths (A3 Task 7)", () => {
   it("leaves no pane route directory or pane README behind", () => {
-    expect(existsSync(path.join(FRONTEND_ROOT, "src/app/ewcp"))).toBe(
-      false,
-    );
+    expect(existsSync(path.join(FRONTEND_ROOT, "src/app/ewcp"))).toBe(false);
     expect(existsSync(path.join(FRONTEND_ROOT, "src/ewcp/README.md"))).toBe(
       false,
     );

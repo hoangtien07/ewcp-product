@@ -62,10 +62,15 @@ export function ExecutionRunThread({
         if (r.workrun_id) {
           getWorkrun(r.execution_run_id)
             .then((w) => alive && setWorkrun(w))
-            .catch((e) => alive && setErr(e instanceof Error ? e.message : String(e)));
+            .catch(
+              (e) =>
+                alive && setErr(e instanceof Error ? e.message : String(e)),
+            );
         }
       })
-      .catch((e) => alive && setErr(e instanceof Error ? e.message : String(e)));
+      .catch(
+        (e) => alive && setErr(e instanceof Error ? e.message : String(e)),
+      );
     return () => {
       alive = false;
     };
@@ -74,8 +79,7 @@ export function ExecutionRunThread({
   // SSE join while the run is live — stream end (or abort) refreshes the
   // record + governed view once, no polling loop.
   useEffect(() => {
-    if (!run?.join_url || !run.run_id || !LIVE_STATUSES.has(run.status))
-      return;
+    if (!run?.join_url || !run.run_id || !LIVE_STATUSES.has(run.status)) return;
     const ctl = new AbortController();
     abortRef.current = ctl;
     setStreaming(true);
@@ -102,11 +106,7 @@ export function ExecutionRunThread({
   }, [run?.join_url, run?.run_id]);
 
   if (!run)
-    return (
-      <p className="text-xs text-zinc-500">
-        {err ?? "Đang tải run…"}
-      </p>
-    );
+    return <p className="text-xs text-zinc-500">{err ?? "Đang tải run…"}</p>;
 
   const pending = workrun?.pending_questions ?? [];
   const approvalGateOpen =

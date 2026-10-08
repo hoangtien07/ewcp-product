@@ -92,7 +92,9 @@ describe("ewcp api", () => {
 
   test("verifyPermalink hits the proxy route", async () => {
     const fetchMock = rs.fn((_u: string) =>
-      Promise.resolve(jsonResponse({ workrun_id: "w", seal_ok: true, manifest: {} })),
+      Promise.resolve(
+        jsonResponse({ workrun_id: "w", seal_ok: true, manifest: {} }),
+      ),
     );
     rs.stubGlobal("fetch", fetchMock);
     await verifyPermalink("h-1");
@@ -104,7 +106,7 @@ describe("ewcp api", () => {
   });
 
   test("joinRunStream parses SSE event/data frames", async () => {
-    const payload = "event: values\ndata: {\"a\":1}\n\nevent: end\ndata: {}\n\n";
+    const payload = 'event: values\ndata: {"a":1}\n\nevent: end\ndata: {}\n\n';
     const body = new ReadableStream({
       start(c) {
         c.enqueue(new TextEncoder().encode(payload));
@@ -130,7 +132,9 @@ describe("ewcp api", () => {
   test("joinRunStream throws EwcpError on non-2xx", async () => {
     rs.stubGlobal(
       "fetch",
-      rs.fn((_u: string) => Promise.resolve(new Response("nope", { status: 404 }))),
+      rs.fn((_u: string) =>
+        Promise.resolve(new Response("nope", { status: 404 })),
+      ),
     );
     await expect(joinRunStream("/x")).rejects.toMatchObject({ status: 404 });
   });

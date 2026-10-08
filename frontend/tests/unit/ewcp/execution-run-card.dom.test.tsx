@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, rs, test } from "@rstest/core";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import type { ExecutionRun } from "@/ewcp/api";
 import {
