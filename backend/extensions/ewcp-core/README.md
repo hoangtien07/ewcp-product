@@ -10,9 +10,16 @@ skeleton + `kernel_client.py` for the EWCP kernel reached **over HTTP**
 - `ewcp_core/kernel_client.py` — `KernelClient` (`httpx.AsyncClient`)
   covering the kernel's real wire surface:
   `POST /tasks`, `POST /workruns/{id}/decisions`, `GET /workruns/{id}`,
-  `GET /verify/{manifest_hash}`, `GET /outcomes`.
+  `GET /verify/{manifest_hash}`, `GET /outcomes`, and the budget
+  admission surface (A3 Task 5): `POST /budget/admissions`,
+  `POST /budget/admissions/{id}/{settle,release}`,
+  `GET /budget/accounts/{execution_run_id}`.
+- `ewcp_core/model_policy.py` — `BudgetAdmissionMiddleware` at
+  `Placement.MODEL_PHYSICAL` (`intercepting=True`): pre-call budget
+  admission through the kernel for governed AND general runs — deny
+  before the provider is invoked. Contract: `docs/vnext/A3_BUDGET_ADMISSION.md`.
 - `ewcp_core/plugin.py` — `EwcpCoreService` (owns the shared client for
-  the Gateway lifetime) + `GET /api/ewcp/_status`.
+  the Gateway lifetime; contributes the middleware) + `GET /api/ewcp/_status`.
 
 ## Wiring (`config.yaml`)
 
@@ -31,6 +38,13 @@ plugins:
       kernel_api_key: ...                 # M2M key — prefer env instead
       timeout_seconds: 30                 # optional
       read_max_attempts: 3                # optional, GET retry bound
+      budget:                             # optional — USD hard cap per run
+        cap_usd: "5.00"                   # unset = USD admission off
+        tenant_id: null                   # dev-mode kernel only
+        usd_per_1k_tokens: "0.004"        # flat worst-case price
+        max_output_tokens_per_call: 4096  # reservation bound
+        general_on_policy_unavailable: local  # local|allow|deny
+                                              # (governed is always deny)
 ```
 
 **Env-first config:** `EWCP_KERNEL_URL` / `EWCP_KERNEL_API_KEY`

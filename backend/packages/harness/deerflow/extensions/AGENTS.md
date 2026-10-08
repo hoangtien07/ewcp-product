@@ -207,6 +207,15 @@ capability, so a single-sided wrapper receives a pass-through counterpart; imple
 both sides when the extension must observe both synchronous and asynchronous execution
 paths.
 
+`MiddlewarePlacement.intercepting=True` is the explicit opt-out for decision-making
+(deny/short-circuit) contributions: the middleware is inserted unwrapped so its
+exceptions reach the host's error policy instead of degrading to a diagnostic +
+pass-through — a swallowed deny would still run the operation. Because the raw
+middleware cannot be renamed for uniqueness, a colliding name is rejected with a
+diagnostic rather than renamed; provenance resolves final positions after
+insertion. Declare it only where fail-closed is the contract — a bug inside an
+intercepting middleware breaks user runs by design.
+
 Lead runs and subagents allocate an `ExtensionData` task store only when middleware,
 task-lifecycle, or system-model observation is registered; services and routers are
 app-scoped and do not allocate one. Middleware and system-call sites recover the
