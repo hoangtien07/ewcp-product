@@ -74,6 +74,8 @@ __all__ = [
     "RUN_STREAM_EXISTING_PATH",
     "THREAD_UPLOADS_PATH",
     "TABLE_PREFIX",
+    "ENDED_RUN_STATUSES",
+    "REFRESH_FINAL",
     "ExecutionRunStatus",
     "FilePayload",
     "FilesWithoutUploader",
@@ -139,7 +141,7 @@ class ExecutionRunStatus(StrEnum):
 # leave pending input behind. COMPLETED / INTERRUPTED are re-verified against
 # thread state on refresh (a `success` row written before an interrupt lands
 # must still flip to pending_interrupt).
-_REFRESH_FINAL = frozenset(
+REFRESH_FINAL = frozenset(
     {
         ExecutionRunStatus.FAILED,
         ExecutionRunStatus.TIMEOUT,
@@ -148,7 +150,7 @@ _REFRESH_FINAL = frozenset(
 
 # Run statuses for which a thread-state check decides pending vs terminal:
 # only a *ended* run can leave pending input behind.
-_ENDED_RUN_STATUSES = frozenset({"success", "interrupted"})
+ENDED_RUN_STATUSES = frozenset({"success", "interrupted"})
 
 
 # Upstream RunStatus (deerflow/runtime/runs/schemas.py) -> projection.
@@ -423,7 +425,7 @@ class RunLauncher:
         so `success`-but-interrupted threads land on PENDING_INTERRUPT.
         Rows still `launching` (run never admitted) return unchanged.
         """
-        if record.run_id is None or record.status in _REFRESH_FINAL:
+        if record.run_id is None or record.status in REFRESH_FINAL:
             return record
         runs = agent_runs.for_plugin(self._namespace)
         run = await runs.get(thread_id=record.thread_id, run_id=record.run_id)
@@ -444,7 +446,7 @@ class RunLauncher:
         ended (only an ended run can leave pending input behind — the extra
         `get_state` is skipped for in-flight runs)."""
         pending = False
-        if run.status in _ENDED_RUN_STATUSES:
+        if run.status in ENDED_RUN_STATUSES:
             pending = detect_pending_interrupt(await runs.get_state(thread_id=thread_id))
         return project_run_status(run.status, pending_interrupt=pending)
 
