@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, rs, test } from "@rstest/core";
-import {
-  cleanup,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
 import { ExecutionRunThread } from "@/ewcp/components/execution-run-thread";
 
@@ -56,7 +51,11 @@ function stubAll(binding: boolean) {
       calls.push(u);
       let body: unknown = {};
       if (u === "/api/ewcp/identity") {
-        body = { user_id: "u-1", actor: "user:u-1", user_actor_binding: binding };
+        body = {
+          user_id: "u-1",
+          actor: "user:u-1",
+          user_actor_binding: binding,
+        };
       } else if (u === "/api/ewcp/runs/er-1") {
         body = { run: RUN };
       } else if (u === "/api/ewcp/runs/er-1/workrun") {

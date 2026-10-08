@@ -39,9 +39,7 @@ describe("ShareVerifyLink", () => {
     stubClipboard(writeText);
     render(<ShareVerifyLink manifestHash={HASH} />);
     fireEvent.click(screen.getByRole("button"));
-    await waitFor(() =>
-      expect(screen.getByText("Đã copy link")).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText("Đã copy link")).toBeTruthy());
     expect(writeText).toHaveBeenCalledTimes(1);
     const url = writeText.mock.calls[0]![0];
     expect(url).toContain(`/verify/${HASH}`);
@@ -56,9 +54,7 @@ describe("ShareVerifyLink", () => {
     await waitFor(() =>
       expect(screen.getByText(/Copy thủ công:/)).toBeTruthy(),
     );
-    expect(
-      screen.getByText(/verify/),
-    ).toBeTruthy();
+    expect(screen.getByText(/verify/)).toBeTruthy();
     // never claims success it did not get
     expect(screen.queryByText("Đã copy link")).toBeNull();
   });
@@ -99,9 +95,7 @@ describe("ManifestCard share flow", () => {
     render(<ManifestCard run={verifiedRun} executionRunId="er-1" />);
     const btn = await screen.findByText("Chia sẻ link xác minh");
     fireEvent.click(btn);
-    await waitFor(() =>
-      expect(screen.getByText("Đã copy link")).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText("Đã copy link")).toBeTruthy());
     const url = writeText.mock.calls[0]![0];
     expect(url).toContain(`/verify/${HASH}`);
   });

@@ -310,6 +310,8 @@ export async function verifyArtifacts(args: {
   return parse(await fetch(`${API}/verify`, { method: "POST", body: fd }));
 }
 
+// PUBLIC seal permalink — anonymous callers allowed: the manifest hash
+// is the capability (kernel contract, mirrored by the extension proxy).
 export async function verifyPermalink(
   manifestHash: string,
 ): Promise<VerifyPermalinkResult> {
@@ -321,8 +323,7 @@ export async function verifyPermalink(
 // The shareable URL a third party opens — the public verify page under
 // /verify/[hash] reads it back through the extension proxy.
 export function verifyShareUrl(manifestHash: string): string {
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "";
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
   return `${origin}/verify/${encodeURIComponent(manifestHash)}`;
 }
 

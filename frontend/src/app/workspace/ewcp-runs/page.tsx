@@ -1,8 +1,8 @@
 "use client";
 
 // ExecutionRun surface — list + intent intake + detail on the SSE
-// join route. Thin host for Task 6; Task 7 rehomes it into the
-// workspace views.
+// join route. Rehomed into the workspace views under /workspace/
+// (A3 Task 7); sidebar entry "EWCP" in workspace-nav-chat-list.
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -78,11 +78,7 @@ export default function EwcpRunsPage() {
             {err && <p className="text-xs text-red-600">{err}</p>}
           </div>
         </div>
-        <CapabilityGallery
-          specs={specs}
-          busy={busy}
-          onIntent={setIntent}
-        />
+        <CapabilityGallery specs={specs} busy={busy} onIntent={setIntent} />
         {activeId && <ExecutionRunThread executionRunId={activeId} />}
       </main>
     </div>

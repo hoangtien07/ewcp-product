@@ -743,6 +743,9 @@ def test_extension_routes_cannot_claim_reserved_exact_paths_with_a_disjoint_meth
         "/api/v1/auth/me",
         "/api/v1/auth/me/",
         "/api/v1/auth/me//",
+        "/api/ewcp/verify",
+        "/api/ewcp/verify/",
+        "/api/ewcp/verify//",
     ],
 )
 def test_extension_csrf_reserved_exact_paths_track_csrf_exemption(

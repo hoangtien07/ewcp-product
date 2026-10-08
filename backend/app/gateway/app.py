@@ -30,6 +30,7 @@ from app.gateway.routers import (
     channel_connections,
     channels,
     console,
+    ewcp_verify,
     features,
     feedback,
     github_webhooks,
@@ -1263,6 +1264,12 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
         logger.info("GitHub webhooks route mounted at /api/webhooks/github")
     else:
         logger.warning("GitHub webhooks route NOT mounted: GITHUB_WEBHOOK_SECRET unset and DEER_FLOW_ALLOW_UNVERIFIED_GITHUB_WEBHOOKS not set. /api/webhooks/github will respond 404. Configure either env var to enable the route.")
+
+    # EWCP public seal verify — anonymous by kernel contract (the manifest
+    # hash is the capability). Host-mounted because extension routers are
+    # fenced out of the public namespace; handlers delegate to the
+    # ewcp-core extension's logic and 404 when it is not installed.
+    app.include_router(ewcp_verify.router)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict[str, str]:

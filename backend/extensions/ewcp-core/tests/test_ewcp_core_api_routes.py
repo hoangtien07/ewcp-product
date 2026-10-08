@@ -4,13 +4,14 @@ decision-actor gating, launch via bound AgentRuns."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from ewcp_core.execution_run_store import ExecutionRunRecord
-from ewcp_core.plugin import build_router
+from ewcp_core.plugin import EwcpCoreService, build_router
 from ewcp_core.run_launcher import LaunchOutcome, TaskMode
 
 
@@ -252,9 +253,35 @@ def test_decide_refused_without_binding():
     assert c.post(f"/api/ewcp/runs/{er_id}/decisions", json={"answer": "approve"}).status_code == 409
 
 
-def test_outcomes_and_verify_proxies(service):
+def test_outcomes_proxy(service):
     c = TestClient(_app(service))
     assert c.get("/api/ewcp/outcomes").json()["outcomes"] == [{"outcome_type": "invoice_recon"}]
+
+
+def _public_verify_app(service: EwcpCoreService) -> FastAPI:
+    """Host-mounted verify surface (A3 Task 7): the public routes are NOT
+    extension-contributed — the gateway registers
+    app.gateway.routers.ewcp_verify, whose handlers resolve the running
+    service on app.state.extensions."""
+    from app.gateway.routers.ewcp_verify import router as verify_router
+
+    app = FastAPI()
+    app.include_router(verify_router)
+    app.state.extensions = SimpleNamespace(services=[("ewcp_core:install", service)])
+    return app
+
+
+def _real_service(client: FakeClient) -> EwcpCoreService:
+    service = EwcpCoreService(config={})
+    service._client = client  # start() normally wires this from kernel_url
+    return service
+
+
+def test_verify_routes_serve_anonymous_verifiers():
+    """PUBLIC verify contract (A3 Task 7): the host-mounted permalink and
+    verify-by-them routes answer without request.state.user — the
+    manifest hash is the capability."""
+    c = TestClient(_public_verify_app(_real_service(FakeClient())))
     assert c.get("/api/ewcp/verify/h-9").json()["workrun_id"] == "wr-1"
     r = c.post(
         "/api/ewcp/verify",
@@ -264,6 +291,21 @@ def test_outcomes_and_verify_proxies(service):
         },
     )
     assert r.json()["verdict"] == "PASS"
+
+
+def test_verify_routes_404_when_extension_absent():
+    """The permalink surface exists only where ewcp-core runs."""
+    app = _public_verify_app(_real_service(FakeClient()))
+    app.state.extensions = SimpleNamespace(services=[])
+    assert TestClient(app).get("/api/ewcp/verify/h-9").status_code == 404
+
+
+def test_extension_router_does_not_claim_verify_paths(service):
+    """The contributed router must not re-claim /api/ewcp/verify — the
+    harness would unmount it for entering the reserved public namespace."""
+    c = TestClient(_app(service, user=None))
+    assert c.get("/api/ewcp/verify/h-9").status_code == 404
+    assert c.post("/api/ewcp/verify").status_code == 404
 
 
 def test_launch_run_uses_bound_agent_runs():

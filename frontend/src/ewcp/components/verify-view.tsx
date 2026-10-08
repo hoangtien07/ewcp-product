@@ -106,9 +106,9 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
           Tra cứu bằng chứng niêm phong — link công khai
         </h2>
         <p className="mt-1 text-xs text-zinc-500">
-          Ai có link đều tra cứu được. Link chứng minh manifest đã niêm
-          phong tồn tại và seal còn nguyên; kiểm chứng từng byte của file
-          cần evidence export + artifacts (form bên dưới).
+          Ai có link đều tra cứu được. Link chứng minh manifest đã niêm phong
+          tồn tại và seal còn nguyên; kiểm chứng từng byte của file cần evidence
+          export + artifacts (form bên dưới).
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input
@@ -157,20 +157,19 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
           </div>
           {permalink.seal_ok === false && (
             <p className="mt-1 text-xs text-red-700 dark:text-red-300">
-              Seal HMAC không khớp — manifest có thể đã bị sửa sau niêm
-              phong.
+              Seal HMAC không khớp — manifest có thể đã bị sửa sau niêm phong.
             </p>
           )}
           {permalink.seal_ok === null && (
             <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-              Kernel không cấu hình seal key — chứng minh được manifest tồn
-              tại nhưng không chứng minh được tính xác thực.
+              Kernel không cấu hình seal key — chứng minh được manifest tồn tại
+              nhưng không chứng minh được tính xác thực.
             </p>
           )}
           <dl className="mt-3 space-y-1 text-xs">
             <div className="flex gap-2">
               <dt className="text-zinc-500">manifest_hash</dt>
-              <dd className="break-all font-mono">
+              <dd className="font-mono break-all">
                 {permalink.manifest.manifest_hash ?? "…"}
               </dd>
             </div>
@@ -185,9 +184,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
                 <li key={i} className="flex gap-2">
                   <span
                     className={
-                      c.result === "PASS"
-                        ? "text-emerald-600"
-                        : "text-red-600"
+                      c.result === "PASS" ? "text-emerald-600" : "text-red-600"
                     }
                   >
                     {c.result ?? "?"}
@@ -214,7 +211,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
                       {d.name ?? d.deliverable_id}
                     </span>
                     {d.sha256 && (
-                      <span className="break-all font-mono text-zinc-400">
+                      <span className="font-mono break-all text-zinc-400">
                         sha256:{d.sha256.slice(0, 16)}…
                       </span>
                     )}

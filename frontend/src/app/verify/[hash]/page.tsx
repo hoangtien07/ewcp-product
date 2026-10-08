@@ -1,7 +1,7 @@
 // Public seal-permalink page — /verify/<manifest_hash>. Third parties
 // open the shared link and inspect the sealed evidence through the
-// extension's verify proxy (session-authenticated on the product; the
-// kernel lookup itself is public by design).
+// extension's public verify proxy: the manifest hash itself is the
+// capability, same contract as the kernel's public /verify routes.
 
 import { use } from "react";
 

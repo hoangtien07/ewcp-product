@@ -42,6 +42,10 @@ _HOST_PUBLIC_PATH_PREFIXES = (
     "/api/v1/auth/oauth/",
     "/api/v1/auth/callback/",
     "/api/webhooks/",
+    # EWCP seal permalinks: anonymous by kernel contract (the manifest
+    # hash is the capability). Host-mounted at app.gateway.ewcp_verify —
+    # extension claims must never enter a public namespace.
+    "/api/ewcp/verify",
 )
 _HOST_PUBLIC_EXACT_PATHS = frozenset(
     {
@@ -53,7 +57,13 @@ _HOST_PUBLIC_EXACT_PATHS = frozenset(
         "/api/v1/auth/providers",
     }
 )
-_HOST_CSRF_EXEMPT_EXACT_PATHS = frozenset({"/api/v1/auth/me"})
+_HOST_CSRF_EXEMPT_EXACT_PATHS = frozenset(
+    {
+        "/api/v1/auth/me",
+        # Anonymous verify-by-them upload — no session exists to protect.
+        "/api/ewcp/verify",
+    }
+)
 _CSRF_STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 _STANDARD_CONVERTOR_REGEXES = {
     "str": "[^/]+",

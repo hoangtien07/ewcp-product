@@ -76,7 +76,9 @@ export function ExecutionRunCard({
         <span title="execution_run_id">
           {run.execution_run_id.slice(0, 8)}…
         </span>
-        {run.workrun_id && <span title="workrun_id">wr:{run.workrun_id.slice(0, 8)}…</span>}
+        {run.workrun_id && (
+          <span title="workrun_id">wr:{run.workrun_id.slice(0, 8)}…</span>
+        )}
       </div>
     </button>
   );
