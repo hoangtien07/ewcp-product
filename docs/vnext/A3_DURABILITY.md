@@ -76,6 +76,22 @@ Route-level coverage (TestClient + stubbed resolvers):
 store, 200 reconcile+list; `POST …/resume` → 404 other-owner, 409
 not-pending (map repaired on the way out), 200 resume.
 
+## Live E2E results (Task 8)
+
+Các kịch bản trên được đo lại end-to-end trên stack thật (kernel HTTP
+@ 9d26e54 + gateway + frontend + Gemini live): bảng kết quả, repro
+commands, boot recipe clean-checkout, bugs đã fix trong quá trình proof
+và limitations đầy đủ — xem `docs/vnext/A3_SMOKE.md`.
+
+- restart: `SIGKILL` gateway giữa run → map row reconcile `failed` sau
+  relaunch; các row khác giữ nguyên projection.
+- interrupt/resume: `cancel?action=interrupt` → `pending_interrupt` →
+  `POST /runs/{id}/resume` → run mới cùng thread → `completed`.
+- egress `local_only` deny: tenant `default` sensitive → model call deny
+  fail-closed, run completed với denial message (không provider call).
+- budget: `cap_usd` nhỏ → kernel `POST /budget/admissions` 402 → deny
+  trước provider call, không account/reservation nào đổ bộ.
+
 ## Limitations — explicit
 
 1. **No background/service recovery.** No PAT, no internal creds, no

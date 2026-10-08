@@ -137,8 +137,11 @@ def _request_scoped_uploader(request: Request) -> httpx.AsyncClient:
 
 
 def build_api_router(service: EwcpCoreService) -> APIRouter:
-    # No prefix — mounted under the extension router's /api/ewcp.
-    router = APIRouter(tags=["ewcp"])
+    # Prefix baked per-route: plugin.build_router appends these routes onto
+    # the /api/ewcp extension router verbatim (it cannot include_router —
+    # FastAPI 0.136 include merges a non-default lifespan_context that the
+    # host extension gateway rejects), so each route must carry the full path.
+    router = APIRouter(prefix="/api/ewcp", tags=["ewcp"])
 
     @router.get("/identity")
     async def read_identity(request: Request) -> dict[str, Any]:
