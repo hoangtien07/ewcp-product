@@ -36,11 +36,21 @@ def test_install_registers_service_and_router() -> None:
     assert len(registry.services) == 1
     assert isinstance(registry.services[0], EwcpCoreService)
     assert len(registry.contributed_routers) == 1
-    assert [r.path for r in registry.contributed_routers[0].routes] == [
+    paths = [r.path for r in registry.contributed_routers[0].routes]
+    # Task-3 durability routes + Task-6 product surface (list/detail/
+    # launch, kernel proxies, gated decisions, verify).
+    for expected in (
         "/api/ewcp/_status",
         "/api/ewcp/runs",
         "/api/ewcp/runs/{execution_run_id}/resume",
-    ]
+        "/api/ewcp/identity",
+        "/api/ewcp/runs/{execution_run_id}",
+        "/api/ewcp/runs/{execution_run_id}/workrun",
+        "/api/ewcp/runs/{execution_run_id}/decisions",
+        "/api/ewcp/outcomes",
+        "/api/ewcp/verify/{manifest_hash}",
+    ):
+        assert expected in paths
     assert install.__deerflow_api__ == "0.2.0"
     assert install.__deerflow_name__ == "ewcp_core"
 

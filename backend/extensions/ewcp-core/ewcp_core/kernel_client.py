@@ -302,6 +302,51 @@ class KernelClient:
         resp = await self._request("GET", f"/budget/accounts/{execution_run_id}", allow_retry=True)
         return resp.json()
 
+    # -- additional reads (A3 Task 6 surface) --------------------------------
+    async def get_manifest(self, workrun_id: str) -> dict[str, Any]:
+        """GET /workruns/{id}/manifest — sealed VerificationManifest
+        (manifest_hash, seal, checks[], deliverables[])."""
+        resp = await self._request("GET", f"/workruns/{workrun_id}/manifest", allow_retry=True)
+        return resp.json()
+
+    async def get_outcome(self, workrun_id: str) -> dict[str, Any]:
+        """GET /workruns/{id}/outcome — the pack-written outcome.json
+        ({outcome_type, result})."""
+        resp = await self._request("GET", f"/workruns/{workrun_id}/outcome", allow_retry=True)
+        return resp.json()
+
+    async def get_evidence(self, workrun_id: str) -> dict[str, Any]:
+        """GET /workruns/{id}/evidence — evidence export: sealed manifest
+        + declared digests per deliverable."""
+        resp = await self._request("GET", f"/workruns/{workrun_id}/evidence", allow_retry=True)
+        return resp.json()
+
+    async def download_deliverable(self, workrun_id: str, deliverable_id: str) -> httpx.Response:
+        """GET /workruns/{id}/deliverables/{did} — raw file bytes; the
+        caller forwards content-type/attachment headers (never retried
+        is unnecessary: reads are safe — retried bounded like reads)."""
+        return await self._request(
+            "GET",
+            f"/workruns/{workrun_id}/deliverables/{deliverable_id}",
+            allow_retry=True,
+        )
+
+    async def verify_evidence(
+        self,
+        *,
+        evidence_json: tuple[str, bytes],
+        files: Sequence[tuple[str, bytes]],
+    ) -> dict[str, Any]:
+        """POST /verify — byte-integrity check: evidence.json + the
+        artifacts it declares. Side-effect-free by contract, so bounded
+        retry is safe."""
+        multipart: list[tuple[str, tuple]] = [
+            ("evidence_json", (evidence_json[0], evidence_json[1], "application/json")),
+        ]
+        multipart += [("files", (name, body)) for name, body in files]
+        resp = await self._request("POST", "/verify", files=multipart, allow_retry=True)
+        return resp.json()
+
     # -- mutations (retry only under the kernel's real replay contract) --------
 
     async def create_task(
@@ -348,18 +393,26 @@ class KernelClient:
         answer: str,
         decision_id: str | None = None,
         decided_by: str | None = None,
+        actor: str | None = None,
     ) -> dict[str, Any]:
         """POST /workruns/{id}/decisions — never retried (no kernel-side
-        replay contract; `decide()` rejects non-PENDING anyway)."""
+        replay contract; `decide()` rejects non-PENDING anyway).
+
+        `actor` is sent as `X-Ewcp-Actor` — the kernel's trusted M2M
+        user-binding contract (kernel PR #108): under tenant-key auth the
+        audit principal becomes `<actor>@tenant:<tenant>`. Kernels
+        predating it ignore the header (tenant principal + label)."""
         body: dict[str, Any] = {"answer": answer}
         if decision_id is not None:
             body["decision_id"] = decision_id
         if decided_by is not None:
             body["decided_by"] = decided_by
+        extra = {"X-Ewcp-Actor": actor} if actor else None
         resp = await self._request(
             "POST",
             f"/workruns/{workrun_id}/decisions",
             json=body,
+            headers=extra,
             allow_retry=False,
         )
         return resp.json()

@@ -27,12 +27,13 @@ from deerflow_extension_api.agent_runs import AgentRunError, resolve_agent_runs
 from deerflow_extension_api.auth import resolve_principal
 from fastapi import APIRouter, HTTPException, Request
 
+from .api_routes import build_api_router
 from .egress_policy import EgressPolicy
 from .execution_run_store import ExecutionRunStore
 from .kernel_client import KernelClient, KernelClientConfig
 from .model_policy import BudgetAdmissionMiddleware, KernelBudgetClient, ModelPolicyConfig
 from .recovery import RecoveryDenied, ResumeNotPending, RunNotOwned, RunRecovery
-from .run_launcher import RunLauncher
+from .run_launcher import RunLauncher, ThreadUploads
 
 
 class EwcpCoreService:
@@ -78,6 +79,23 @@ class EwcpCoreService:
     @property
     def recovery(self) -> RunRecovery | None:
         return self._recovery
+
+    @property
+    def user_actor_binding(self) -> bool:
+        """Whether decision actions may bind the product user as the
+        audit principal — requires a kernel honoring `X-Ewcp-Actor`
+        (kernel PR #108). Operators running an older kernel set
+        `decision_user_binding: false` in the plugin config, which
+        renders frontend decision buttons read-only and 409s the route.
+        """
+        return bool(self.config.get("decision_user_binding", True))
+
+    def new_launcher(self, uploader: ThreadUploads | None = None) -> RunLauncher | None:
+        """Per-request launcher: the shared store plus an uploads seam
+        bound to the caller's credentials (HttpThreadUploads)."""
+        if self._store is None:
+            return None
+        return RunLauncher(self._store, uploader=uploader)
 
     async def start(self, deps: ExtensionRuntimeDeps) -> None:
         if self._resolved.kernel_url:
@@ -227,4 +245,5 @@ def build_router(service: EwcpCoreService) -> APIRouter:
             raise HTTPException(exc.status_code, str(exc)) from exc
         return _record_view(record)
 
+    router.include_router(build_api_router(service))
     return router
