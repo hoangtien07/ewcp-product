@@ -148,18 +148,21 @@ Dùng `google_api_key` sạch warning.
 
 Kiểm `.github/workflows/*.yml`:
 
-- **`pull_request`**: tất cả workflow (backend-unit-tests, frontend-unit-tests,
-  lint-check, e2e-tests, backend-blocking-io-tests, …) chỉ lọc `types`, **không lọc
-  `branches`** → PR vào `product/vnext` chạy CI ngay, không cần sửa. ✅
+- **`pull_request`**: hầu hết workflow chỉ lọc `types`, không lọc `branches` → chạy
+  trên mọi base branch kể cả `product/vnext`. **Ngoại lệ**: `lint-check.yml` có
+  `pull_request.branches: ['*']` — glob `*` của GitHub Actions **không match dấu
+  `/`**, nên PR vào `product/vnext` không bao giờ chạy lint (phát hiện qua Devin
+  Review). Đã sửa thành `['**']` để khôi phục ý định "mọi branch". ✅
 - **`push`**: giới hạn `['main', '*-dev']` → push/merge lên `product/vnext` không có
   post-merge coverage.
 
 Vì `product/vnext` là lane dài hạn mà mọi phase sau build lên, PR này thêm
 `'product/vnext'` vào `push.branches` của 5 workflow green-gate (mỗi file 1 dòng):
 `backend-unit-tests`, `frontend-unit-tests`, `lint-check`, `backend-blocking-io-tests`,
-`e2e-tests`. Các workflow cron/label (`nightly`, `triage`, `label-sync`,
-`verify-versions`, `replay-e2e`, `jev-plugin-package`) giữ nguyên — không liên quan
-lane này. Đây là config CI tối thiểu, không đụng code.
+`e2e-tests`; và sửa `pull_request.branches` của `lint-check` `'*' → '**'`. Các
+workflow cron/label (`nightly`, `triage`, `label-sync`, `verify-versions`,
+`replay-e2e`, `jev-plugin-package`) giữ nguyên — không liên quan lane này. Đây là
+config CI tối thiểu, không đụng code.
 
 ## 7. Solver Lab — ghi chú scaffolding (KHÔNG build)
 
