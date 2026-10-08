@@ -266,6 +266,23 @@ def test_outcomes_and_verify_proxies(service):
     assert r.json()["verdict"] == "PASS"
 
 
+def test_verify_routes_serve_anonymous_verifiers(service):
+    """PUBLIC verify contract (A3 Task 7): the permalink lookup and the
+    verify-by-them upload answer without request.state.user — the manifest
+    hash is the capability. Every other route stays session-gated."""
+    c = TestClient(_app(service, user=None))
+    assert c.get("/api/ewcp/verify/h-9").json()["workrun_id"] == "wr-1"
+    r = c.post(
+        "/api/ewcp/verify",
+        files={
+            "evidence_json": ("evidence.json", b"{}", "application/json"),
+            "files": ("a.json", b"1"),
+        },
+    )
+    assert r.json()["verdict"] == "PASS"
+    assert c.get("/api/ewcp/outcomes").status_code == 401
+
+
 def test_launch_run_uses_bound_agent_runs():
     launcher = FakeLauncher()
     service = FakeService(client=FakeClient(), launcher=launcher)

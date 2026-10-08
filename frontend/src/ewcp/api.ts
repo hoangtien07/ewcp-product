@@ -310,6 +310,8 @@ export async function verifyArtifacts(args: {
   return parse(await fetch(`${API}/verify`, { method: "POST", body: fd }));
 }
 
+// PUBLIC seal permalink — anonymous callers allowed: the manifest hash
+// is the capability (kernel contract, mirrored by the extension proxy).
 export async function verifyPermalink(
   manifestHash: string,
 ): Promise<VerifyPermalinkResult> {

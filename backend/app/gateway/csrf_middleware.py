@@ -25,7 +25,16 @@ CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
 CSRF_TOKEN_LENGTH = 64  # bytes
 _CSRF_STATE_CHANGING_METHODS: frozenset[str] = frozenset({"POST", "PUT", "DELETE", "PATCH"})
-_CSRF_EXEMPT_EXACT_PATHS: frozenset[str] = frozenset({"/api/v1/auth/me"})
+_CSRF_EXEMPT_EXACT_PATHS: frozenset[str] = frozenset(
+    {
+        "/api/v1/auth/me",
+        # Anonymous verify-by-them upload (evidence + artifacts). The route
+        # is public by the kernel's verify contract — there is no session
+        # to protect, so the double-submit check would only reject
+        # legitimate third-party verifiers.
+        "/api/ewcp/verify",
+    }
+)
 
 
 def is_secure_request(request: Request) -> bool:

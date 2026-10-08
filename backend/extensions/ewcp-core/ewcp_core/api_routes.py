@@ -6,6 +6,12 @@ ExecutionRunMap row and forward to the kernel via the service's M2M
 `KernelClient`. Observation itself rides the Gateway SSE routes directly
 (`run_join_url` on the record view) — no proxy needed there.
 
+Exception: the two verify routes are PUBLIC by kernel contract — the
+manifest hash is the capability (`GET /verify/{hash}` permalink,
+`POST /verify` verify-by-them). They serve anonymous third parties, so
+`/api/ewcp/verify` sits in the gateway's public path prefixes and the
+handlers never consult request.state.user.
+
 Decision gating (plan P1): `POST /runs/{id}/decisions` only serves when
 `service.user_actor_binding` is on — i.e. the deployment's kernel honors
 `X-Ewcp-Actor` (kernel PR #108), so the audit principal binds
@@ -309,8 +315,10 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
             raise _kernel_error(exc) from exc
 
     @router.get("/verify/{manifest_hash}")
-    async def verify_permalink(manifest_hash: str, request: Request) -> dict[str, Any]:
-        _user_id(request)
+    async def verify_permalink(manifest_hash: str) -> dict[str, Any]:
+        """PUBLIC seal permalink — the kernel's `GET /verify/{hash}`
+        contract (the hash is the capability; anonymous third parties
+        resolve seal state + manifest contents through it)."""
         try:
             return await _require_client(service).verify_manifest(manifest_hash)
         except Exception as exc:
@@ -318,9 +326,9 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
 
     @router.post("/verify")
     async def verify_evidence(request: Request) -> dict[str, Any]:
-        """Byte-integrity check: forward the verifier's evidence.json +
-        declared artifacts to the kernel's POST /verify."""
-        _user_id(request)
+        """PUBLIC verify-by-them upload — byte-integrity check: forward
+        the verifier's evidence.json + declared artifacts to the
+        kernel's `POST /verify` (same anonymous contract kernel-side)."""
         form = await request.form()
         evidence = form.get("evidence_json")
         if not isinstance(evidence, UploadFile):

@@ -5,6 +5,7 @@ import {
   CalendarClock,
   MessagesSquare,
   BlocksIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -30,6 +31,20 @@ export function WorkspaceNavChatList() {
   return (
     <SidebarGroup className="pt-1">
       <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={pathname.startsWith("/workspace/ewcp")}
+            asChild
+          >
+            <Link
+              className="text-muted-foreground"
+              href="/workspace/ewcp-runs"
+            >
+              <ShieldCheckIcon />
+              <span>EWCP</span>
+            </Link>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton isActive={pathname === "/workspace/chats"} asChild>
             <Link className="text-muted-foreground" href="/workspace/chats">

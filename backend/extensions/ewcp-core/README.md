@@ -47,7 +47,13 @@ skeleton + `kernel_client.py` for the EWCP kernel reached **over HTTP**
   AUTH_DISABLED only; see `docs/vnext/A3_DURABILITY.md`.
 - Routes: `GET /api/ewcp/_status`, `GET /api/ewcp/runs` (foreground
   reconcile + list for the caller), `POST /api/ewcp/runs/{id}/resume`
-  (interrupt response, owner-scoped).
+  (interrupt response, owner-scoped), and the Task-6 product surface
+  (`api_routes.py`): `GET /identity`, `POST /runs` (launch),
+  `GET /runs/{id}` + the owner-scoped governed proxies
+  (`workrun`/`manifest`/`outcome`/`evidence`/`deliverables`/`decisions`),
+  `GET /outcomes`. The two verify routes are **public** (anonymous —
+  kernel verify contract): `GET /verify/{manifest_hash}` permalink and
+  `POST /verify` verify-by-them. See `docs/vnext/A3_SURFACE.md`.
 
 ## Wiring (`config.yaml`)
 
