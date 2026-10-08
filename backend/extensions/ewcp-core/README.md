@@ -10,10 +10,17 @@ skeleton + `kernel_client.py` for the EWCP kernel reached **over HTTP**
 - `ewcp_core/kernel_client.py` — `KernelClient` (`httpx.AsyncClient`)
   covering the kernel's real wire surface:
   `POST /tasks`, `POST /workruns/{id}/decisions`, `GET /workruns/{id}`,
-  `GET /verify/{manifest_hash}`, `GET /outcomes`.
+  `GET /verify/{manifest_hash}`, `GET /outcomes`, and the budget
+  admission surface (A3 Task 5): `POST /budget/admissions`,
+  `POST /budget/admissions/{id}/{settle,release}`,
+  `GET /budget/accounts/{execution_run_id}`.
 - `ewcp_core/plugin.py` — `EwcpCoreService` (owns the shared client +
-  ExecutionRunMap launcher for the Gateway lifetime) +
-  `GET /api/ewcp/_status`.
+  ExecutionRunMap launcher for the Gateway lifetime; contributes the
+  budget middleware) + `GET /api/ewcp/_status`.
+- `ewcp_core/model_policy.py` — `BudgetAdmissionMiddleware` at
+  `Placement.MODEL_PHYSICAL` (`intercepting=True`): pre-call budget
+  admission through the kernel for governed AND general runs — deny
+  before the provider is invoked. Contract: `docs/vnext/A3_BUDGET_ADMISSION.md`.
 - `ewcp_core/run_launcher.py` — `RunLauncher.launch(intent, mode)`:
   `agent_runs.for_plugin("ewcp.core")` → `create_thread` → uploads
   (BEFORE `start`, through `POST /api/threads/{id}/uploads` via an
@@ -62,6 +69,13 @@ plugins:
       kernel_api_key: ...                 # M2M key — prefer env instead
       timeout_seconds: 30                 # optional
       read_max_attempts: 3                # optional, GET retry bound
+      budget:                             # optional — USD hard cap per run
+        cap_usd: "5.00"                   # unset = USD admission off
+        tenant_id: null                   # dev-mode kernel only
+        usd_per_1k_tokens: "0.004"        # flat worst-case price
+        max_output_tokens_per_call: 4096  # reservation bound
+        general_on_policy_unavailable: local  # local|allow|deny
+                                              # (governed is always deny)
       egress:                             # optional — A3 Task 4
         default_mode: local_only          # local_only | restricted | approved_cloud
         tenant_modes: {}                  # {tenant_id: mode}
@@ -135,7 +149,9 @@ matching kernel `DataEgressPolicy` semantics.
 
 `GET /api/ewcp/_status` →
 `{extension, kernel_url, kernel_configured, api_key_configured,
-client_started, store_started, egress}`. Reports `kernel_configured: false`
+client_started, store_started, egress, budget_cap_usd,
+budget_admission_enabled, general_on_policy_unavailable}`.
+Reports `kernel_configured: false`
 instead of failing Gateway startup when no kernel URL is set.
 
 ## ExecutionRunMap persistence (Ruling)

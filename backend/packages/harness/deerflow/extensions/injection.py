@@ -95,7 +95,7 @@ def inject_middlewares(
     # must be the *last* one inserted at that index. Sorting by (index,
     # priority) descending achieves that: lower-priority items are processed
     # — and therefore inserted, and therefore displaced outward — first.
-    resolved: list[tuple[int, int, str, object]] = []
+    resolved: list[tuple[int, int, str, MiddlewarePlacement]] = []
     for priority, (_, (source, placement)) in enumerate(ordered):
         anchor = anchors.get(placement.placement)
         if anchor is None:
@@ -106,13 +106,37 @@ def inject_middlewares(
             message = f"placement {placement.placement.name} fell back to a secondary anchor (primary anchor middleware is absent from this stack); the observation semantics of this placement may differ from its documented guarantee"
             diagnostics.append(Diagnostic.warning(source, message))
             logger.warning("Extension %s: %s", source, message)
-        resolved.append((index, priority, source, placement.middleware))
+        resolved.append((index, priority, source, placement))
 
     # LangChain requires names to be unique across the complete stack and uses
     # them as trace identities and, for before/after hooks, LangGraph node IDs.
     used_names = {getattr(middleware, "name", type(middleware).__name__) for middleware in result}
     runtime_diagnostic_sink = isolation_diagnostic_sink if isolation_diagnostic_sink is not None else diagnostics.append
-    for index, priority, source, middleware in sorted(resolved, key=lambda item: (item[0], item[1]), reverse=True):
+    raw_sources: dict[int, str] = {}
+    for index, priority, source, placement in sorted(resolved, key=lambda item: (item[0], item[1]), reverse=True):
+        middleware = placement.middleware
+        if placement.intercepting:
+            # Intercepting (decision) middlewares opt out of the fail-open
+            # IsolatedMiddleware wrapper — a deny or short-circuit exception
+            # must propagate to the host's error policy, not degrade to a
+            # diagnostic + pass-through. The raw middleware cannot be
+            # renamed for uniqueness, so a colliding name rejects the
+            # contribution instead of silently breaking LangGraph node IDs.
+            try:
+                inner_name = getattr(middleware, "name", type(middleware).__name__)
+            except Exception as exc:
+                diagnostics.append(Diagnostic.error(source, f"middleware construction failed: {exc}"))
+                logger.exception("Extension %s: intercepting middleware name resolution failed", source)
+                continue
+            if inner_name in used_names:
+                diagnostics.append(Diagnostic.error(source, f"intercepting middleware name {inner_name!r} collides with an existing stack name; names must be unique across the composed stack"))
+                continue
+            used_names.add(inner_name)
+            result.insert(index, middleware)
+            # Positions shift as later insertions displace outward — resolve
+            # the final index after the loop rather than recording it now.
+            raw_sources[id(middleware)] = source
+            continue
         try:
             inner_name = getattr(middleware, "name", type(middleware).__name__)
             base_name = graph_safe_middleware_name(f"extension:{source}:{inner_name}:{priority}")
@@ -136,4 +160,7 @@ def inject_middlewares(
         result.insert(index, wrapped)
 
     provenance = {index: middleware.source for index, middleware in enumerate(result) if isinstance(middleware, IsolatedMiddleware)}
+    for index, middleware in enumerate(result):
+        if id(middleware) in raw_sources:
+            provenance[index] = raw_sources[id(middleware)]
     return result, provenance, diagnostics

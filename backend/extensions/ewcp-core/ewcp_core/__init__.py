@@ -20,6 +20,7 @@ def install(registry: ExtensionRegistry, config: Mapping[str, Any]) -> None:
     service = EwcpCoreService(config=config)
     registry.service(service)
     registry.routers((build_router(service),))
+    registry.middlewares(service)
     registry.middlewares(EgressMiddlewareContributor(service.egress_policy))
 
 

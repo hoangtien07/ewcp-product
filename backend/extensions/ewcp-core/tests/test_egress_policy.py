@@ -531,10 +531,10 @@ class TestInstallWiring:
 
         install(registry, {})
 
-        assert len(seen["mw"]) == 1
-        assert isinstance(seen["mw"][0], EgressMiddlewareContributor)
+        egress = [c for c in seen["mw"] if isinstance(c, EgressMiddlewareContributor)]
+        assert len(egress) == 1
         # the service's policy is the same object the middleware enforces
-        assert seen["mw"][0].policy is seen["svc"][0].egress_policy
+        assert egress[0].policy is seen["svc"][0].egress_policy
 
     def test_status_reports_egress(self) -> None:
         from fastapi import FastAPI

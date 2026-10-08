@@ -32,6 +32,24 @@ kernel's real idempotency contract — i.e. `create_task` when the caller
 supplies `idempotency_key`. `decide` is never retried: a replayed answer
 has no dedupe surface on the kernel side.
 
+Budget admission (A3 Task 5 — kernel hard-cap authority for paid model
+calls; contract doc `docs/vnext/A3_BUDGET_ADMISSION.md`):
+
+  POST   /budget/admissions                  precheck + reserve BEFORE the
+                                             call; `Idempotency-Key`
+                                             dedupes client retries
+                                             (replay -> 200 +
+                                             `Idempotent-Replay: true`)
+  POST   /budget/admissions/{id}/settle      charge metered spend;
+                                             idempotent by admission_id
+  POST   /budget/admissions/{id}/release     close a pending reservation
+                                             (failed call), idempotent
+  GET    /budget/accounts/{execution_run_id} audit view: cap/spent/reserved
+
+  Settle/release retry on transient faults because the kernel's replay
+  contract makes a repeated call return the recorded outcome, never a
+  double charge.
+
 The kernel API key is request-scoped, never stored on the httpx client,
 never interpolated into URLs or log lines.
 """
@@ -102,6 +120,26 @@ class TaskSubmitResult:
 
     run: dict[str, Any]
     idempotent_replay: bool
+
+
+@dataclass(frozen=True)
+class BudgetAdmissionResult:
+    """`POST /budget/admissions` outcome — the admission record plus
+    whether the kernel replayed an earlier reservation under the same
+    `Idempotency-Key`."""
+
+    admission: dict[str, Any]
+    idempotent_replay: bool
+
+
+class BudgetDenied(RuntimeError):
+    """`POST /budget/admissions` returned 402 — the execution_run's pinned
+    cap is exhausted; the caller must NOT invoke the provider. `detail`
+    carries the kernel's deny body (error, cap_usd, spent_usd, ...)."""
+
+    def __init__(self, detail: Mapping[str, Any] | None = None) -> None:
+        self.detail = dict(detail or {})
+        super().__init__(str(self.detail.get("message") or self.detail.get("error") or "budget exceeded"))
 
 
 # (field-name, filename, body-bytes-or-str, optional content-type)
@@ -194,6 +232,74 @@ class KernelClient:
         workrun_id}. Attests a seal exists; byte-integrity is the
         POST /verify upload path (out of Task-1 scope)."""
         resp = await self._request("GET", f"/verify/{manifest_hash}", allow_retry=True)
+        return resp.json()
+
+    # -- budget admission (kernel hard-cap authority; A3 Task 5) -------------
+
+    async def admit_budget(
+        self,
+        *,
+        execution_run_id: str,
+        cap_usd: str,
+        reserve_usd: str,
+        tenant_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> BudgetAdmissionResult:
+        """POST /budget/admissions — precheck + worst-case reserve in one
+        transaction, BEFORE the provider call. 402 -> BudgetDenied.
+
+        `idempotency_key` dedupes transport retries (same key -> same
+        reservation, `Idempotent-Replay: true`); retries only run when a
+        key is supplied — without one a retry could double-reserve."""
+        body: dict[str, Any] = {
+            "execution_run_id": execution_run_id,
+            "cap_usd": cap_usd,
+            "reserve_usd": reserve_usd,
+        }
+        if tenant_id:
+            body["tenant_id"] = tenant_id
+        extra = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        try:
+            resp = await self._request(
+                "POST",
+                "/budget/admissions",
+                json=body,
+                headers=extra,
+                allow_retry=idempotency_key is not None,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 402:
+                detail = exc.response.json().get("detail") if exc.response.headers.get("content-type", "").startswith("application/json") else None
+                raise BudgetDenied(detail if isinstance(detail, Mapping) else {"message": exc.response.text}) from exc
+            raise
+        return BudgetAdmissionResult(
+            admission=resp.json(),
+            idempotent_replay=resp.headers.get("idempotent-replay") == "true",
+        )
+
+    async def settle_budget(self, admission_id: str, *, tokens: int, usd: str, model: str = "") -> dict[str, Any]:
+        """POST /budget/admissions/{id}/settle — charge the metered cost.
+        Retriable: replaying a settled admission returns the recorded
+        charge instead of double-writing the ledger."""
+        resp = await self._request(
+            "POST",
+            f"/budget/admissions/{admission_id}/settle",
+            json={"tokens": int(tokens), "usd": usd, "model": model},
+            allow_retry=True,
+        )
+        return resp.json()
+
+    async def release_budget(self, admission_id: str) -> dict[str, Any]:
+        """POST /budget/admissions/{id}/release — close a pending
+        reservation with no charge (the admitted call failed before
+        metering). Retriable: idempotent on released rows."""
+        resp = await self._request("POST", f"/budget/admissions/{admission_id}/release", allow_retry=True)
+        return resp.json()
+
+    async def get_budget_account(self, execution_run_id: str) -> dict[str, Any]:
+        """GET /budget/accounts/{id} — the run's cap, ledger spend, and
+        open reservations (audit view)."""
+        resp = await self._request("GET", f"/budget/accounts/{execution_run_id}", allow_retry=True)
         return resp.json()
 
     # -- mutations (retry only under the kernel's real replay contract) --------

@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from deerflow_extension_api import ExtensionRuntimeDeps
+from deerflow_extension_api import AgentBuildContext, AgentScope, ExtensionRuntimeDeps, HostPolicySnapshot, MiddlewarePlacement, Placement
 from deerflow_extension_api.agent_runs import AgentRunError, resolve_agent_runs
 from deerflow_extension_api.auth import resolve_principal
 from fastapi import APIRouter, HTTPException, Request
@@ -30,6 +30,7 @@ from fastapi import APIRouter, HTTPException, Request
 from .egress_policy import EgressPolicy
 from .execution_run_store import ExecutionRunStore
 from .kernel_client import KernelClient, KernelClientConfig
+from .model_policy import BudgetAdmissionMiddleware, KernelBudgetClient, ModelPolicyConfig
 from .recovery import RecoveryDenied, ResumeNotPending, RunNotOwned, RunRecovery
 from .run_launcher import RunLauncher
 
@@ -43,12 +44,20 @@ class EwcpCoreService:
     `ewcp_` prefix — declare `table_prefix: ewcp_` on the `plugins:` record;
     see README). The launcher it exposes needs the request-bound `AgentRuns`
     handle (`resolve_agent_runs(request)`) passed per call — never cached.
+
+    Also a MiddlewareContributor: `contribute_middlewares` installs the
+    budget-admission gate (A3 Task 5) at Placement.MODEL_PHYSICAL with
+    `intercepting=True` — deny decisions must propagate, not be
+    swallowed by the host's fail-open isolation wrapper. The middleware
+    resolves the live client per call, so kernel-absent deployments get
+    the local policy behavior instead of a broken build.
     """
 
     def __init__(self, config: Mapping[str, Any] | None = None) -> None:
         self.config: Mapping[str, Any] = config or {}
         self._resolved = KernelClientConfig.resolve(self.config)
         self.egress_policy = EgressPolicy(EgressPolicy.resolve_config(self.config))
+        self._model_policy = ModelPolicyConfig.resolve(self.config)
         self._client: KernelClient | None = None
         self._store: ExecutionRunStore | None = None
         self._launcher: RunLauncher | None = None
@@ -88,6 +97,15 @@ class EwcpCoreService:
         self._store = None
         self._recovery = None
 
+    def contribute_middlewares(self, app_store: Any, ctx: AgentBuildContext) -> tuple[MiddlewarePlacement, ...]:
+        policy = ctx.policy if isinstance(getattr(ctx, "policy", None), HostPolicySnapshot) else HostPolicySnapshot()
+        middleware = BudgetAdmissionMiddleware(
+            KernelBudgetClient(lambda: self._client),
+            self._model_policy,
+            policy,
+        )
+        return (MiddlewarePlacement(middleware, Placement.MODEL_PHYSICAL, AgentScope.BOTH, intercepting=True),)
+
     def status(self) -> dict[str, Any]:
         return {
             "extension": "ewcp_core",
@@ -101,6 +119,9 @@ class EwcpCoreService:
                 "tenant_modes": dict(self.egress_policy.config.tenant_modes),
             },
             "recovery_started": self._recovery is not None,
+            "budget_cap_usd": str(self._model_policy.cap_usd) if self._model_policy.cap_usd is not None else None,
+            "budget_admission_enabled": self._model_policy.cap_usd is not None,
+            "general_on_policy_unavailable": self._model_policy.general_on_policy_unavailable,
         }
 
 

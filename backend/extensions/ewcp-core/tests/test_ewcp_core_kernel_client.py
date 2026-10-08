@@ -24,6 +24,7 @@ import httpx
 import pytest
 
 from ewcp_core.kernel_client import (
+    BudgetDenied,
     KernelClient,
     KernelClientConfig,
     KernelNotConfigured,
@@ -359,3 +360,176 @@ async def test_transport_error_does_not_leak_key(caplog: pytest.LogCaptureFixtur
     for record in caplog.records:
         assert secret not in record.getMessage()
     assert secret not in str(exc_info.value)
+
+
+# -- budget admission (A3 Task 5; kernel /budget/* surface) -------------------
+
+
+def _admission_payload(**overrides):
+    body = {
+        "admission_id": "adm-1",
+        "execution_run_id": "wr-1",
+        "cap_usd": "5.00",
+        "spent_usd": "0.10",
+        "reserved_usd": "0.20",
+        "reserve_usd": "0.10",
+        "expires_at": 1700.0,
+    }
+    body.update(overrides)
+    return body
+
+
+@pytest.mark.asyncio
+async def test_admit_budget_posts_contract_and_returns_admission() -> None:
+    rec = _Recorder([_json_response(_admission_payload(), status=201)])
+    client = _client(rec)
+
+    result = await client.admit_budget(
+        execution_run_id="wr-1",
+        cap_usd="5.00",
+        reserve_usd="0.10",
+        tenant_id="acme",
+        idempotency_key="budget:wr-1:abc",
+    )
+    await client.aclose()
+
+    (req,) = rec.requests
+    assert req.method == "POST"
+    assert req.url.path == "/budget/admissions"
+    assert json.loads(req.content) == {
+        "execution_run_id": "wr-1",
+        "cap_usd": "5.00",
+        "reserve_usd": "0.10",
+        "tenant_id": "acme",
+    }
+    assert req.headers["idempotency-key"] == "budget:wr-1:abc"
+    assert result.admission["admission_id"] == "adm-1"
+    assert result.idempotent_replay is False
+
+
+@pytest.mark.asyncio
+async def test_admit_budget_402_raises_budget_denied_with_detail() -> None:
+    detail = {"error": "budget_exceeded", "message": "over cap", "cap_usd": "5.00"}
+    rec = _Recorder([_json_response({"detail": detail}, status=402)])
+    client = _client(rec)
+
+    with pytest.raises(BudgetDenied) as exc_info:
+        await client.admit_budget(execution_run_id="wr-1", cap_usd="5.00", reserve_usd="0.10")
+    await client.aclose()
+
+    assert exc_info.value.detail["error"] == "budget_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_admit_budget_retry_reuses_idempotency_key() -> None:
+    """A transport retry must send the SAME Idempotency-Key so the kernel
+    dedupes to one reservation instead of double-reserving."""
+    rec = _Recorder(
+        [
+            httpx.ConnectError("refused"),
+            _json_response(_admission_payload(), status=201),
+        ]
+    )
+    client = _client(rec)
+
+    result = await client.admit_budget(
+        execution_run_id="wr-1",
+        cap_usd="5.00",
+        reserve_usd="0.10",
+        idempotency_key="budget:wr-1:k1",
+    )
+    await client.aclose()
+
+    assert len(rec.requests) == 2
+    assert [r.headers["idempotency-key"] for r in rec.requests] == ["budget:wr-1:k1"] * 2
+    assert result.admission["admission_id"] == "adm-1"
+
+
+@pytest.mark.asyncio
+async def test_admit_budget_without_key_is_never_retried() -> None:
+    rec = _Recorder([httpx.ConnectError("refused"), _json_response(_admission_payload(), status=201)])
+    client = _client(rec)
+
+    with pytest.raises(httpx.TransportError):
+        await client.admit_budget(execution_run_id="wr-1", cap_usd="5.00", reserve_usd="0.10")
+    await client.aclose()
+
+    assert len(rec.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_admit_budget_idempotent_replay_flag() -> None:
+    rec = _Recorder([_json_response(_admission_payload(), status=200, headers={"Idempotent-Replay": "true"})])
+    client = _client(rec)
+
+    result = await client.admit_budget(
+        execution_run_id="wr-1",
+        cap_usd="5.00",
+        reserve_usd="0.10",
+        idempotency_key="budget:wr-1:k2",
+    )
+    await client.aclose()
+
+    assert result.idempotent_replay is True
+
+
+@pytest.mark.asyncio
+async def test_settle_budget_posts_metered_charge() -> None:
+    rec = _Recorder([_json_response({"admission_id": "adm-1", "settled": True, "charged_usd": "0.11", "overshoot": False})])
+    client = _client(rec)
+
+    body = await client.settle_budget("adm-1", tokens=550, usd="0.11", model="gpt-x")
+    await client.aclose()
+
+    (req,) = rec.requests
+    assert req.method == "POST"
+    assert req.url.path == "/budget/admissions/adm-1/settle"
+    assert json.loads(req.content) == {"tokens": 550, "usd": "0.11", "model": "gpt-x"}
+    assert body["settled"] is True
+
+
+@pytest.mark.asyncio
+async def test_settle_budget_retries_transport_errors() -> None:
+    """Settle is idempotent by admission_id on the kernel side — a retried
+    transport failure returns the recorded charge, never double-charges."""
+    rec = _Recorder(
+        [
+            httpx.ConnectError("refused"),
+            _json_response({"admission_id": "adm-1", "settled": True, "replayed": True, "charged_usd": "0.11"}),
+        ]
+    )
+    client = _client(rec)
+
+    body = await client.settle_budget("adm-1", tokens=550, usd="0.11")
+    await client.aclose()
+
+    assert len(rec.requests) == 2
+    assert body["settled"] is True
+
+
+@pytest.mark.asyncio
+async def test_release_budget_posts_release() -> None:
+    rec = _Recorder([_json_response({"admission_id": "adm-1", "released": True})])
+    client = _client(rec)
+
+    body = await client.release_budget("adm-1")
+    await client.aclose()
+
+    (req,) = rec.requests
+    assert req.method == "POST"
+    assert req.url.path == "/budget/admissions/adm-1/release"
+    assert body["released"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_budget_account_is_a_safe_read() -> None:
+    rec = _Recorder([_json_response({"execution_run_id": "wr-1", "cap_usd": "5.00", "spent_usd": "0.10", "reserved_usd": "0"})])
+    client = _client(rec)
+
+    body = await client.get_budget_account("wr-1")
+    await client.aclose()
+
+    (req,) = rec.requests
+    assert req.method == "GET"
+    assert req.url.path == "/budget/accounts/wr-1"
+    assert body["cap_usd"] == "5.00"

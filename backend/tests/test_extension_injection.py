@@ -399,3 +399,117 @@ def test_wrapper_construction_failure_is_isolated_to_one_contribution():
 
     assert "ok" in _tags(result)
     assert any("name exploded" in diagnostic.message for diagnostic in diagnostics)
+
+
+# -- intercepting contributions (deny decisions opt out of isolation) ----------
+
+
+class _DenyingMiddleware(AgentMiddleware):
+    """A decision middleware: raises instead of calling the handler."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.admit_calls = 0
+
+    async def awrap_model_call(self, request, handler):
+        raise PermissionError("budget admission denied")
+
+
+def test_intercepting_contribution_is_not_isolated():
+    """`intercepting=True` opts out of IsolatedMiddleware: the raw
+    middleware lands in the stack so its exceptions actually propagate —
+    a deny that the isolation wrapper would have swallowed."""
+    from deerflow.extensions.isolation import IsolatedMiddleware
+
+    result, _, _ = inject_middlewares(
+        _stack(),
+        _ANCHORS,
+        AgentScope.LEAD,
+        _ctx(),
+        _extensions(MiddlewarePlacement(_DenyingMiddleware(), Placement.MODEL_PHYSICAL, intercepting=True)),
+    )
+
+    intercepting = [m for m in result if isinstance(m, _DenyingMiddleware)]
+    assert len(intercepting) == 1
+    assert all(not isinstance(m, IsolatedMiddleware) for m in result if isinstance(m, _DenyingMiddleware) or (isinstance(m, IsolatedMiddleware) and isinstance(m.inner, _DenyingMiddleware)))
+
+
+def test_intercepting_middleware_exception_propagates_through_stack():
+    """Fail-closed means the deny reaches the graph's error policy — under
+    the isolation wrapper it would have been swallowed into a pass-through."""
+    import asyncio
+
+    from deerflow.extensions.isolation import IsolatedMiddleware
+
+    result, _, _ = inject_middlewares(
+        _stack(),
+        _ANCHORS,
+        AgentScope.LEAD,
+        _ctx(),
+        _extensions(MiddlewarePlacement(_DenyingMiddleware(), Placement.MODEL_PHYSICAL, intercepting=True)),
+    )
+
+    entry = next(m for m in result if isinstance(m, _DenyingMiddleware))
+    assert not isinstance(entry, IsolatedMiddleware)
+
+    handler_called = False
+
+    async def handler(request):
+        nonlocal handler_called
+        handler_called = True
+
+    import pytest
+
+    with pytest.raises(PermissionError, match="budget admission denied"):
+        asyncio.run(entry.awrap_model_call(object(), handler))
+    assert handler_called is False
+
+
+def test_non_intercepting_contribution_stays_isolated():
+    """Regression: the default (observational) path still gets the
+    fail-open wrapper — intercepting is opt-in per placement."""
+    from deerflow.extensions.isolation import IsolatedMiddleware
+
+    result, _, _ = inject_middlewares(
+        _stack(),
+        _ANCHORS,
+        AgentScope.LEAD,
+        _ctx(),
+        _extensions(MiddlewarePlacement(_DenyingMiddleware(), Placement.MODEL_PHYSICAL)),
+    )
+
+    assert any(isinstance(m, IsolatedMiddleware) and isinstance(m.inner, _DenyingMiddleware) for m in result)
+
+
+def test_intercepting_name_collision_is_skipped_with_diagnostic():
+    """A raw middleware cannot be renamed to fit the unique-name rule —
+    colliding names reject the contribution instead of silently inserting
+    a second 'same-name' middleware LangGraph would reject later."""
+    result, _, diagnostics = inject_middlewares(
+        _stack(),
+        _ANCHORS,
+        AgentScope.LEAD,
+        _ctx(),
+        _extensions(
+            MiddlewarePlacement(_DenyingMiddleware(), Placement.TOOL_VISIBLE, intercepting=True),
+            MiddlewarePlacement(_DenyingMiddleware(), Placement.TOOL_VISIBLE, intercepting=True),
+        ),
+    )
+
+    assert sum(isinstance(m, _DenyingMiddleware) for m in result) == 1
+    assert any("name" in d.message.lower() and "collide" in d.message.lower() or "unique" in d.message.lower() for d in diagnostics)
+
+
+def test_intercepting_provenance_records_source():
+    """Ordering violations can still blame the extension — provenance must
+    cover raw (unwrapped) insertions, not only IsolatedMiddleware ones."""
+    result, provenance, _ = inject_middlewares(
+        _stack(),
+        _ANCHORS,
+        AgentScope.LEAD,
+        _ctx(),
+        _extensions(MiddlewarePlacement(_DenyingMiddleware(), Placement.MODEL_PHYSICAL, intercepting=True)),
+    )
+
+    index = next(i for i, m in enumerate(result) if isinstance(m, _DenyingMiddleware))
+    assert provenance.get(index) == "demo:install"

@@ -62,9 +62,20 @@ class MiddlewarePlacement:
 
     ``middleware`` is typed ``Any`` rather than ``AgentMiddleware`` so this
     module stays import-light; the host validates the type at injection time.
+
+    ``intercepting`` opts the contribution out of the host's fail-open
+    isolation wrapper: observational contributions (the default) have their
+    exceptions swallowed into diagnostics so a broken extension cannot break
+    a run — which also swallows deliberate deny decisions. An intercepting
+    middleware makes decisions (deny, short-circuit): its exceptions must
+    reach the host's error policy, so it is inserted into the stack
+    unwrapped and a raised exception aborts the wrapped call. Declare it
+    only for middleware whose contract genuinely requires fail-closed
+    semantics — a bug inside one breaks user runs by design.
     """
 
     middleware: Any
     placement: Placement
     scope: AgentScope = AgentScope.BOTH
     order: int = 0
+    intercepting: bool = False
