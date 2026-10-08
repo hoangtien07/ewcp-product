@@ -445,6 +445,16 @@ class TestContributor:
             # lead + subagent must both be covered
             assert p.scope.value == 3
 
+    def test_placements_are_intercepting(self) -> None:
+        """Deny decisions must not be wrapped by the host's fail-open
+        IsolatedMiddleware: a deny short-circuits without calling the
+        downstream handler, which a wrapped middleware reports as a
+        failure and skips — silently passing the denied call through."""
+        pol = _policy()
+        placements = EgressMiddlewareContributor(pol).contribute_middlewares(None, None)
+        for p in placements:
+            assert p.intercepting is True
+
 
 class TestModelMiddleware:
     @pytest.mark.asyncio

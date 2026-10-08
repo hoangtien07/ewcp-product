@@ -245,5 +245,12 @@ def build_router(service: EwcpCoreService) -> APIRouter:
             raise HTTPException(exc.status_code, str(exc)) from exc
         return _record_view(record)
 
-    router.include_router(build_api_router(service))
+    # NOTE: not `router.include_router(build_api_router(service))` —
+    # FastAPI 0.136 merges a non-default `lifespan_context` into this router
+    # on include, and the host extension gateway rejects contributed routers
+    # carrying a lifespan ("register an ExtensionService instead"), which
+    # unmounts every /api/ewcp route. The inner router bakes the `/api/ewcp`
+    # prefix into each route at decoration time, so appending its routes
+    # mounts them at the same final paths the host expects.
+    router.routes.extend(build_api_router(service).routes)
     return router

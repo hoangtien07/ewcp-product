@@ -546,15 +546,21 @@ class EgressMiddlewareContributor:
         self.policy = policy
 
     def contribute_middlewares(self, app_store: Any, ctx: Any) -> Sequence[MiddlewarePlacement]:
+        # intercepting=True on both: deny decisions short-circuit by returning
+        # a message without calling the downstream handler, which the host's
+        # fail-open IsolatedMiddleware would otherwise treat as an extension
+        # failure and skip — silently passing the denied call through.
         return (
             MiddlewarePlacement(
                 middleware=EgressPolicyMiddleware(self.policy),
                 placement=Placement.MODEL_PHYSICAL,
                 scope=AgentScope.BOTH,
+                intercepting=True,
             ),
             MiddlewarePlacement(
                 middleware=EgressToolMiddleware(self.policy),
                 placement=Placement.TOOL_RAW,
                 scope=AgentScope.BOTH,
+                intercepting=True,
             ),
         )
