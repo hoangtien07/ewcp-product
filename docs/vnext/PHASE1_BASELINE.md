@@ -14,7 +14,7 @@ Ngày chạy: 2026-10-08 (UTC), máy Devin Linux (amd64).
 | Frontend check | ✅ `pnpm check` sạch (0 errors) | §3 |
 | Boot stack | ✅ gateway :8001 healthy + frontend :3000 phục vụ UI | §4 |
 | Chat turn thật | ✅ UI → gateway → Gemini → reply `BASELINE_OK` trong 1s | §5 |
-| CI trên PR → `product/vnext` | ✅ trigger `pull_request` không lọc branch | §6 |
+| CI trên PR → `product/vnext` | ✅ sau fix `lint-check` `'*'→'**'` (các workflow khác không lọc) | §6 |
 | CI trên push → `product/vnext` | ⚠️ không có → đã thêm `product/vnext` vào push filter (5 workflow) | §6 |
 
 Không patch code upstream nào. Mọi thay đổi nằm ở config môi trường (gitignored)
@@ -42,9 +42,12 @@ make install     # uv sync (backend) + pnpm install (frontend) + pre-commit hook
 (mọi shard): `Cannot find module 'jsdom'` khi `readabilipy` gọi
 `javascript/ExtractArticle.js`, fallback pure-Python mất `href` của link → assert fail.
 
-Nguyên nhân: thư mục `backend/.venv/lib/python3.12/site-packages/readabilipy/javascript/`
-có `ExtractArticle.js` nhưng thiếu `package.json`/`node_modules` (venv đóng gói thiếu
-node deps — [suy luận] từ cấu trúc thư mục, không phải lỗi test).
+Nguyên nhân: `readabilipy` tự cài node deps lúc runtime (`simple_json.py` gọi
+`run_npm_install()` khi thiếu `javascript/node_modules`). Trên CI bước tự-cài này
+chạy được nên suite xanh; trên máy này nó fail (venv copy hỏng — `npm install` tay
+phải chạy mới có `package.json`/`node_modules`), fallback pure-Python mất `href`
+→ 22 assert fail. [suy luận: nguyên nhân gốc là fs bị prune trong snapshot, không
+xác định được lý do tự-cài thất bại]
 
 Fix môi trường (không sửa code):
 
@@ -52,9 +55,9 @@ Fix môi trường (không sửa code):
 cd backend/.venv/lib/python3.12/site-packages/readabilipy/javascript && npm install
 ```
 
-Sau đó 48/48 test file đó pass. Lưu ý: upstream CI **không** chạy bước npm này —
-trên CI pure-Python fallback được kỳ vọng là đủ, còn suite test mới đòi JS extractor.
-Đây là khác biệt môi trường cần ghi nhận, không phải defect của suite.
+Sau đó 48/48 test file đó pass. Đây là khác biệt môi trường của máy verify,
+không phải defect của suite — CI upstream xanh mà không cần bước tay này
+(đã xác nhận: 4 shard backend-unit-tests trên PR này đều pass).
 
 ## 3. Kết quả verify
 
@@ -189,7 +192,7 @@ Việc chọn 20 task cụ thể và tiêu chí "parity pass" là quyết địn
 
 | # | Điểm chệch | Loại | Lý do |
 |---|---|---|---|
-| 1 | `npm install` trong `readabilipy/javascript/` của venv | env | thiếu jsdom → 22 test fail; upstream CI không cần vì kỳ vọng fallback |
+| 1 | `npm install` trong `readabilipy/javascript/` của venv | env | venv copy hỏng, runtime auto-install jsdom thất bại → 22 test fail; CI tự-cài được |
 | 2 | `google_api_key` thay `gemini_api_key` trong config.yaml | config | param đúng của langchain_google_genai; example doc dùng tên cũ |
 | 3 | Thêm model `gemini-3.8-flash`/`gemini-3.5-flash-lite` thay `gemini-2.5-flash` | config | 2.5-flash deprecated trên key hiện tại (Google 404) |
 | 4 | `DEER_FLOW_AUTH_DISABLED=1` + tạo admin qua `/setup` | env | baseline local không SSO; UI vẫn đòi admin một lần |
