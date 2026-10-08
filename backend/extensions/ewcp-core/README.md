@@ -27,6 +27,17 @@ skeleton + `kernel_client.py` for the EWCP kernel reached **over HTTP**
   product DB: extension-owned table `ewcp_execution_runs` (private
   `MetaData`, `table_prefix: ewcp_`), created inside
   `ExtensionService.start()` via `deps.session_factory`.
+- `ewcp_core/recovery.py` — FOREGROUND-only recovery (A3 Task 3):
+  `RunRecovery.recover()` reconciles the map against live thread truth
+  via the request-fresh bound handle (run-id `get` + ended-run
+  `get_state` for pending interrupts — never a single-snapshot truth);
+  `resume()` is gated on real pending state with a revoke check before
+  the mutating call; `assert_can_start()` is the dup-start guard. No
+  background/service recovery exists — `bind()` is SESSION/
+  AUTH_DISABLED only; see `docs/vnext/A3_DURABILITY.md`.
+- Routes: `GET /api/ewcp/_status`, `GET /api/ewcp/runs` (foreground
+  reconcile + list for the caller), `POST /api/ewcp/runs/{id}/resume`
+  (interrupt response, owner-scoped).
 
 ## Wiring (`config.yaml`)
 
