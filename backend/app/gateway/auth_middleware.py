@@ -41,10 +41,10 @@ _PUBLIC_PATH_PREFIXES: tuple[str, ...] = (
     # Inbound webhooks authenticate themselves via provider-specific signatures
     # (e.g. GitHub's X-Hub-Signature-256), not session cookies.
     "/api/webhooks/",
-    # EWCP seal permalinks (ewcp-core extension): the manifest-hash lookup
-    # and the verify-by-them upload mirror the kernel's public verify
-    # contract — the manifest hash itself is the capability, so third-party
-    # verifiers reach these anonymously by design.
+    # EWCP seal permalinks: the manifest-hash lookup and the verify-by-them
+    # upload mirror the kernel's public verify contract — the manifest hash
+    # itself is the capability, so third-party verifiers reach these
+    # anonymously by design. Host-mounted at app.gateway.routers.ewcp_verify.
     "/api/ewcp/verify",
 )
 

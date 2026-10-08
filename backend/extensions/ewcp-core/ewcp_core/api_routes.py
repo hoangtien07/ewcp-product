@@ -6,11 +6,12 @@ ExecutionRunMap row and forward to the kernel via the service's M2M
 `KernelClient`. Observation itself rides the Gateway SSE routes directly
 (`run_join_url` on the record view) — no proxy needed there.
 
-Exception: the two verify routes are PUBLIC by kernel contract — the
-manifest hash is the capability (`GET /verify/{hash}` permalink,
-`POST /verify` verify-by-them). They serve anonymous third parties, so
-`/api/ewcp/verify` sits in the gateway's public path prefixes and the
-handlers never consult request.state.user.
+The two verify routes are NOT here: `GET /verify/{hash}` and
+`POST /verify` are PUBLIC by kernel contract (the manifest hash is the
+capability), and the extension gateway fences contributed routes out of
+the host public namespace — so they are mounted host-side at
+`app.gateway.ewcp_verify` and share their logic through
+`ewcp_core.verify_surface`. Everything below stays session-gated.
 
 Decision gating (plan P1): `POST /runs/{id}/decisions` only serves when
 `service.user_actor_binding` is on — i.e. the deployment's kernel honors
@@ -311,34 +312,6 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
         _user_id(request)
         try:
             return {"outcomes": await _require_client(service).list_outcomes()}
-        except Exception as exc:
-            raise _kernel_error(exc) from exc
-
-    @router.get("/verify/{manifest_hash}")
-    async def verify_permalink(manifest_hash: str) -> dict[str, Any]:
-        """PUBLIC seal permalink — the kernel's `GET /verify/{hash}`
-        contract (the hash is the capability; anonymous third parties
-        resolve seal state + manifest contents through it)."""
-        try:
-            return await _require_client(service).verify_manifest(manifest_hash)
-        except Exception as exc:
-            raise _kernel_error(exc) from exc
-
-    @router.post("/verify")
-    async def verify_evidence(request: Request) -> dict[str, Any]:
-        """PUBLIC verify-by-them upload — byte-integrity check: forward
-        the verifier's evidence.json + declared artifacts to the
-        kernel's `POST /verify` (same anonymous contract kernel-side)."""
-        form = await request.form()
-        evidence = form.get("evidence_json")
-        if not isinstance(evidence, UploadFile):
-            raise HTTPException(422, "evidence_json file is required")
-        files = [(f.filename or "file", await f.read()) for f in form.getlist("files") if isinstance(f, UploadFile)]
-        try:
-            return await _require_client(service).verify_evidence(
-                evidence_json=(evidence.filename or "evidence.json", await evidence.read()),
-                files=files,
-            )
         except Exception as exc:
             raise _kernel_error(exc) from exc
 

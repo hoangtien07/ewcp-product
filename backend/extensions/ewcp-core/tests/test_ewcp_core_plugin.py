@@ -38,7 +38,10 @@ def test_install_registers_service_and_router() -> None:
     assert len(registry.contributed_routers) == 1
     paths = [r.path for r in registry.contributed_routers[0].routes]
     # Task-3 durability routes + Task-6 product surface (list/detail/
-    # launch, kernel proxies, gated decisions, verify).
+    # launch, kernel proxies, gated decisions). The public verify routes
+    # are NOT contributed paths — they are host-mounted at
+    # app.gateway.routers.ewcp_verify (Task 7; the public namespace is
+    # host-reserved upstream).
     for expected in (
         "/api/ewcp/_status",
         "/api/ewcp/runs",
@@ -48,9 +51,10 @@ def test_install_registers_service_and_router() -> None:
         "/api/ewcp/runs/{execution_run_id}/workrun",
         "/api/ewcp/runs/{execution_run_id}/decisions",
         "/api/ewcp/outcomes",
-        "/api/ewcp/verify/{manifest_hash}",
     ):
         assert expected in paths
+    assert "/api/ewcp/verify/{manifest_hash}" not in paths
+    assert "/api/ewcp/verify" not in paths
     assert install.__deerflow_api__ == "0.2.0"
     assert install.__deerflow_name__ == "ewcp_core"
 

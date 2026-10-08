@@ -31,6 +31,16 @@ Public (anonymous — mirrors the kernel's public verify contract,
 - `POST /api/ewcp/verify` — verify-by-them: evidence.json + artifact
   bytes → PASS/FAIL per artifact + manifest recompute.
 
+These two are **host-mounted** (`app/gateway/routers/ewcp_verify.py`),
+not extension-contributed: the harness fences extension route claims out
+of the host public namespace — a contributed claim under
+`/api/ewcp/verify` would unmount the whole ewcp-core router. The host
+handlers delegate to `ewcp_core.verify_surface`, which finds the running
+`EwcpCoreService` on `app.state.extensions` and 404s when the extension
+is absent. `/api/ewcp/verify` sits in the gateway auth public prefixes +
+CSRF exact-exempt list, mirrored by the harness reserved sets (pin tests
+enforce equality).
+
 ## Components (`frontend/src/ewcp/`)
 
 `execution-run-list`/`execution-run-card`/`execution-run-thread` (list +

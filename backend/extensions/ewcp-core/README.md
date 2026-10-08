@@ -53,7 +53,10 @@ skeleton + `kernel_client.py` for the EWCP kernel reached **over HTTP**
   (`workrun`/`manifest`/`outcome`/`evidence`/`deliverables`/`decisions`),
   `GET /outcomes`. The two verify routes are **public** (anonymous —
   kernel verify contract): `GET /verify/{manifest_hash}` permalink and
-  `POST /verify` verify-by-them. See `docs/vnext/A3_SURFACE.md`.
+  `POST /verify` verify-by-them — but they are **host-mounted** at
+  `app.gateway.routers.ewcp_verify` (upstream reserves public paths to
+  host code), delegating to `verify_surface.py` here. See
+  `docs/vnext/A3_SURFACE.md`.
 
 ## Wiring (`config.yaml`)
 
