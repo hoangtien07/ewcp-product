@@ -1,0 +1,137 @@
+import { afterEach, describe, expect, rs, test } from "@rstest/core";
+
+import {
+  getExecutionRun,
+  joinRunStream,
+  launchExecutionRun,
+  listExecutionRuns,
+  submitDecision,
+  verifyPermalink,
+  verifyShareUrl,
+} from "@/ewcp/api";
+
+afterEach(() => {
+  rs.unstubAllGlobals();
+});
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+const RUN = {
+  execution_run_id: "er-1",
+  thread_id: "t-1",
+  run_id: "r-1",
+  workrun_id: "wr-1",
+  task_mode: "general",
+  status: "running",
+  intent: "đối soát",
+  idempotency_key: "k-1",
+  created_by: "u-1",
+  created_at: "2026-01-01",
+  updated_at: "2026-01-01",
+  join_url: "/api/threads/t-1/runs/r-1/join",
+};
+
+describe("ewcp api", () => {
+  test("listExecutionRuns unwraps {runs}", async () => {
+    const fetchMock = rs.fn((_u: string, _i?: RequestInit) =>
+      Promise.resolve(jsonResponse({ runs: [RUN] })),
+    );
+    rs.stubGlobal("fetch", fetchMock);
+    const runs = await listExecutionRuns();
+    expect(runs).toEqual([RUN]);
+    expect(fetchMock.mock.calls[0]![0]).toBe("/api/ewcp/runs");
+  });
+
+  test("getExecutionRun refresh adds query", async () => {
+    const fetchMock = rs.fn((_u: string) =>
+      Promise.resolve(jsonResponse({ run: RUN })),
+    );
+    rs.stubGlobal("fetch", fetchMock);
+    await getExecutionRun("er-1", { refresh: true });
+    expect(fetchMock.mock.calls[0]![0]).toBe("/api/ewcp/runs/er-1?refresh=1");
+  });
+
+  test("launchExecutionRun posts multipart intent + mode + files", async () => {
+    const fetchMock = rs.fn((_u: string, _i?: RequestInit) =>
+      Promise.resolve(jsonResponse({ run: RUN, idempotent_replay: false })),
+    );
+    rs.stubGlobal("fetch", fetchMock);
+    const file = new File([new Uint8Array([1])], "a.txt");
+    await launchExecutionRun({
+      intent: "đối soát",
+      taskMode: "governed",
+      files: [file],
+      idempotencyKey: "k-9",
+    });
+    const init = fetchMock.mock.calls[0]![1];
+    const fd = init!.body as FormData;
+    expect(fd.get("intent")).toBe("đối soát");
+    expect(fd.get("task_mode")).toBe("governed");
+    expect(fd.get("idempotency_key")).toBe("k-9");
+    expect(fd.getAll("files")).toHaveLength(1);
+  });
+
+  test("submitDecision posts answer + decision_id as JSON", async () => {
+    const fetchMock = rs.fn((_u: string, _i?: RequestInit) =>
+      Promise.resolve(jsonResponse({ workrun_id: "wr-1" })),
+    );
+    rs.stubGlobal("fetch", fetchMock);
+    await submitDecision("er-1", { answer: "approve", decisionId: "d-1" });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/ewcp/runs/er-1/decisions");
+    expect(JSON.parse(init!.body as string)).toEqual({
+      answer: "approve",
+      decision_id: "d-1",
+    });
+  });
+
+  test("verifyPermalink hits the proxy route", async () => {
+    const fetchMock = rs.fn((_u: string) =>
+      Promise.resolve(jsonResponse({ workrun_id: "w", seal_ok: true, manifest: {} })),
+    );
+    rs.stubGlobal("fetch", fetchMock);
+    await verifyPermalink("h-1");
+    expect(fetchMock.mock.calls[0]![0]).toBe("/api/ewcp/verify/h-1");
+  });
+
+  test("verifyShareUrl points at /verify/<hash>", () => {
+    expect(verifyShareUrl("h-2")).toContain("/verify/h-2");
+  });
+
+  test("joinRunStream parses SSE event/data frames", async () => {
+    const payload = "event: values\ndata: {\"a\":1}\n\nevent: end\ndata: {}\n\n";
+    const body = new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(payload));
+        c.close();
+      },
+    });
+    rs.stubGlobal(
+      "fetch",
+      rs.fn((_u: string, _i?: RequestInit) =>
+        Promise.resolve(new Response(body, { status: 200 })),
+      ),
+    );
+    const events: { event: string; data: unknown }[] = [];
+    await joinRunStream("/api/threads/t-1/runs/r-1/join", {
+      onEvent: (e) => events.push(e),
+    });
+    expect(events).toEqual([
+      { event: "values", data: { a: 1 } },
+      { event: "end", data: {} },
+    ]);
+  });
+
+  test("joinRunStream throws EwcpError on non-2xx", async () => {
+    rs.stubGlobal(
+      "fetch",
+      rs.fn((_u: string) => Promise.resolve(new Response("nope", { status: 404 }))),
+    );
+    await expect(joinRunStream("/x")).rejects.toMatchObject({ status: 404 });
+  });
+});
