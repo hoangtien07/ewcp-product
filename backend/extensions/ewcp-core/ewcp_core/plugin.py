@@ -17,6 +17,7 @@ from typing import Any
 from deerflow_extension_api import ExtensionRuntimeDeps
 from fastapi import APIRouter
 
+from .egress_policy import EgressPolicy
 from .execution_run_store import ExecutionRunStore
 from .kernel_client import KernelClient, KernelClientConfig
 from .run_launcher import RunLauncher
@@ -36,6 +37,7 @@ class EwcpCoreService:
     def __init__(self, config: Mapping[str, Any] | None = None) -> None:
         self.config: Mapping[str, Any] = config or {}
         self._resolved = KernelClientConfig.resolve(self.config)
+        self.egress_policy = EgressPolicy(EgressPolicy.resolve_config(self.config))
         self._client: KernelClient | None = None
         self._store: ExecutionRunStore | None = None
         self._launcher: RunLauncher | None = None
@@ -76,6 +78,10 @@ class EwcpCoreService:
             "api_key_configured": self._resolved.api_key is not None,
             "client_started": self._client is not None,
             "store_started": self._store is not None,
+            "egress": {
+                "default_mode": self.egress_policy.config.default_mode,
+                "tenant_modes": dict(self.egress_policy.config.tenant_modes),
+            },
         }
 
 
