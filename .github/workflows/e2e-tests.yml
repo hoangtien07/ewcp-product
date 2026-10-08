@@ -2,7 +2,7 @@ name: E2E Tests
 
 on:
   push:
-    branches: [ 'main', '*-dev' ]
+    branches: [ 'main', '*-dev', 'product/vnext' ]
     paths:
       - 'frontend/**'
       - 'backend/app/gateway/routers/plugins.py'

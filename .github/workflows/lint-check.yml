@@ -2,9 +2,9 @@ name: Lint Check
 
 on:
   push:
-    branches: [ 'main', '*-dev' ]
+    branches: [ 'main', '*-dev', 'product/vnext' ]
   pull_request:
-    branches: [ '*' ]
+    branches: [ '**' ]
 
 permissions:
   contents: read
