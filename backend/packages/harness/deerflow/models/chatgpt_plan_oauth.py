@@ -620,9 +620,11 @@ class OAuthCallbackListener:
                     self.end_headers()
                     return
                 outer._result = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
-                body = b"<html><body><h2>Sign in with ChatGPT complete.</h2><p>You can return to your application.</p></body></html>"
+                # Plain text only — paired HTML tags are inventory-scanned by the
+                # framework-tag denylist test.
+                body = b"Sign in with ChatGPT complete. You can return to your application.\n"
                 self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
