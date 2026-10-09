@@ -133,7 +133,9 @@ describe("ExecutionRunCard", () => {
       />,
     );
     expect(screen.getByText("Tự báo cáo — chưa xác minh")).toBeTruthy();
-    expect(screen.getByTitle("Không tìm thấy: outputs/output.csv")).toBeTruthy();
+    expect(
+      screen.getByTitle("Không tìm thấy: outputs/output.csv"),
+    ).toBeTruthy();
   });
 
   test("F2: verified and no_claims flags render no chip", () => {
