@@ -29,8 +29,11 @@ recorded below. Budget: **≤ 8 files**.
 | 14 | `backend/packages/harness/deerflow/agents/middlewares/AGENTS.md` | One numbered entry for `ToolArgAliasMiddleware`; list renumbered | Repo convention: middleware guide kept in sync with the chain | 2026-10-09 |
 | 15 | `backend/tests/test_tool_arg_alias_middleware.py` | NEW — 24 tests: C03 payload replay, alias matrix, canonical-wins, extras preserved, log field, sync+async chain, registration order | TDD; test dir is upstream's `backend/tests/` | 2026-10-09 |
 | 16 | `backend/tests/test_tool_error_handling_middleware.py` | Count pin 22→23, import, position assertion (`receipt < alias < error_handling`) | Existing pin asserts exact middleware count — the new always-on entry legitimately adds one | 2026-10-09 |
+| 17 | `backend/packages/harness/deerflow/community/aio_sandbox/aio_sandbox.py` | `_aio_file_error_from_body` + `_aio_file_read_error` helpers; `read_file` catches `pydantic.ValidationError`/`ApiError` and re-raises builtin exceptions the tool layer renders | GP-01: AIO `v1/file/read` `success:false` error envelopes fail the agent_sandbox SDK's `ResponseFileReadResult` parse — the designed binary-file hint in `read_file_tool` never reached the model. Adapter seam is the least-invasive fix; deeper schema fix is upstream's | 2026-10-09 |
+| 18 | `backend/tests/test_aio_sandbox.py` | `TestReadFileErrorEnvelope` + `_aio_error_body`/`_sdk_parse_error` fixtures (6 tests) | TDD; test dir is upstream's `backend/tests/` | 2026-10-09 |
+| 19 | `backend/tests/test_read_file_tool_binary.py` | One test pinning the AIO error-envelope → designed-hint contract end to end | GP-01 regression guard; test dir is upstream's | 2026-10-09 |
 
-Current count: **16 / 8** — OVER BUDGET (was 10/8). Two rows (#9 chat-page.tsx;
+Current count: **19 / 8** — OVER BUDGET (was 16/8 before this change). Two rows (#9 chat-page.tsx;
 the `src/app/workspace/ewcp-runs/` + `src/app/verify/` route files were
 also added in upstream dirs without rows) were shipped by #40/#42
 without ledger entries — recorded here retroactively. The `getToolCallKind`
