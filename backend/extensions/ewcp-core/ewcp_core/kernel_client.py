@@ -563,10 +563,11 @@ class KernelClient:
         declared input slots as files. Hard-422s on missing required
         inputs/context — surfacing them to the caller verbatim.
 
-        NO kernel idempotency contract (A5a stage plan §1.5.2 — the
-        endpoint is retry-unsafe for M2M callers): never retried at this
-        layer; dedupe must live above it (the ExecutionRunMap row's
-        owner+key unique index)."""
+        The product lane sends no Idempotency-Key here (the contract's
+        typed binding is `invoke_outcome`): transport never retries and
+        the ExecutionRunMap row's owner+key unique index is the dedupe.
+        Kernel `main` does dedupe (tenant, key) on this endpoint too —
+        contract_version/invocation_id fields are optional there."""
         form_fields: list[tuple[str, tuple]] = []
         if tenant_id:
             form_fields.append(("tenant_id", (None, tenant_id)))
