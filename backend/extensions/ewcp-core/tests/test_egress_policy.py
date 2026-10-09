@@ -314,6 +314,67 @@ class TestToolChannel:
         d = pol.check_tool_call("web_search", {"query": "q"}, _sensitive_ctx(ewcp_egress_mode="restricted", app_config=_app_config(mode="allowlist", approval="deny")))
         assert d.allowed
 
+    # -- WP-02 audit: unauthorized MCP/tool destinations ----------------------
+    # Authorization under restricted is per-destination, not per tool name:
+    # an allowed tool carrying url/uri/endpoint args must still land inside
+    # allowed_domains, or an operator allowlist silently authorizes every
+    # destination the model chooses.
+
+    def test_restricted_allowed_tool_with_unauthorized_destination_denied(self) -> None:
+        pol = _policy(egress={"allowed_tools": ["acme_mcp_fetch_url"], "allowed_domains": ["mcp.internal"]})
+        d = pol.check_tool_call(
+            "acme_mcp_fetch_url",
+            {"url": "https://evil.example.com/x"},
+            _sensitive_ctx(ewcp_egress_mode="restricted", app_config=_app_config(mode="allowlist", approval="deny")),
+        )
+        assert not d.allowed and d.channel == CHANNEL_TOOL
+
+    def test_restricted_allowed_tool_with_unauthorized_endpoint_arg_denied(self) -> None:
+        pol = _policy(egress={"allowed_tools": ["acme_mcp_call"], "allowed_domains": ["mcp.internal"]})
+        d = pol.check_tool_call(
+            "acme_mcp_call",
+            {"endpoint": "https://evil.example.com/mcp"},
+            _sensitive_ctx(ewcp_egress_mode="restricted", app_config=_app_config(mode="allowlist", approval="deny")),
+        )
+        assert not d.allowed
+
+    def test_restricted_allowed_tool_with_authorized_destination_allowed(self) -> None:
+        pol = _policy(egress={"allowed_tools": ["acme_mcp_fetch_url"], "allowed_domains": ["mcp.internal", "*.internal.example"]})
+        d = pol.check_tool_call(
+            "acme_mcp_fetch_url",
+            {"url": "https://mcp.internal/fetch"},
+            _sensitive_ctx(ewcp_egress_mode="restricted", app_config=_app_config(mode="allowlist", approval="deny")),
+        )
+        assert d.allowed
+        d = pol.check_tool_call(
+            "acme_mcp_fetch_url",
+            {"url": "https://erp.internal.example/api"},
+            _sensitive_ctx(ewcp_egress_mode="restricted", app_config=_app_config(mode="allowlist", approval="deny")),
+        )
+        assert d.allowed
+
+    def test_restricted_mcp_tool_without_allowlist_entry_denied(self) -> None:
+        # an MCP-named tool not declared in allowed_tools is denied even
+        # when its destination happens to be in allowed_domains
+        pol = _policy(egress={"allowed_domains": ["mcp.internal"]})
+        d = pol.check_tool_call(
+            "acme_mcp_fetch_url",
+            {"url": "https://mcp.internal/fetch"},
+            _sensitive_ctx(ewcp_egress_mode="restricted", app_config=_app_config(mode="allowlist", approval="deny")),
+        )
+        assert not d.allowed
+
+    def test_local_only_denies_mcp_tool_even_for_lan_destination(self) -> None:
+        # local_only keeps a strict builtin-only tool surface — an in-boundary
+        # LAN MCP server needs `restricted` + allowed_domains, not local_only
+        pol = _policy()
+        d = pol.check_tool_call(
+            "acme_mcp_fetch_url",
+            {"url": "http://192.168.1.50:8080/mcp"},
+            _sensitive_ctx(app_config=_app_config(mode="isolated")),
+        )
+        assert not d.allowed
+
     def test_restricted_denies_bash_when_sandbox_open(self) -> None:
         pol = _policy()
         d = pol.check_tool_call("bash", {"command": "ls"}, _sensitive_ctx(ewcp_egress_mode="restricted", app_config=_app_config(mode="open")))
