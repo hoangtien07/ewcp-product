@@ -459,32 +459,44 @@ class KernelClient:
         *,
         intent: str,
         tenant_id: str | None = None,
+        fields: Mapping[str, str] | None = None,
         files: Mapping[str, Sequence[UploadTuple]] | None = None,
         idempotency_key: str | None = None,
+        timeout: float | None = None,
     ) -> TaskSubmitResult:
         """POST /tasks — multipart intake.
 
+        `fields` carries spec context keys (mst, ky…) — the kernel router
+        reads declared context keys from the form alongside the intent.
         `files` maps the spec's declared input slot (e.g. `invoices_zip`)
         to (filename, body, content_type) members; the general lane uses
         the fixed slot name `files`. Retry is allowed only when
         `idempotency_key` is set — the kernel dedupes on (tenant, key)
-        and replays the original run response."""
+        and replays the original run response.
+
+        `timeout` overrides the client default for this call: governed
+        intake dispatches the pack pipeline synchronously inside the
+        kernel request (app.py `_sync_execute`), so callers that expect
+        a completed run view should pass a wider bound."""
         # Always multipart — the kernel's intake contract is form fields
         # read via request.form() (app.py:2543). `(None, value)` tuples
         # render as plain fields inside the multipart body, so intent/
         # tenant_id ride the same encoding as file uploads even when no
         # files are present (a bare `data=` would go urlencoded).
-        fields: list[tuple[str, tuple]] = [("intent", (None, intent))]
+        form_fields: list[tuple[str, tuple]] = [("intent", (None, intent))]
         if tenant_id:
-            fields.append(("tenant_id", (None, tenant_id)))
-        fields += [(slot, (filename, body) if content_type is None else (filename, body, content_type)) for slot, members in (files or {}).items() for filename, body, content_type in members]
+            form_fields.append(("tenant_id", (None, tenant_id)))
+        form_fields += [(name, (None, value)) for name, value in (fields or {}).items()]
+        form_fields += [(slot, (filename, body) if content_type is None else (filename, body, content_type)) for slot, members in (files or {}).items() for filename, body, content_type in members]
         extra = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        request_kwargs: dict[str, Any] = {"files": form_fields, "headers": extra}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
         resp = await self._request(
             "POST",
             "/tasks",
-            files=fields,
-            headers=extra,
             allow_retry=idempotency_key is not None,
+            **request_kwargs,
         )
         return TaskSubmitResult(
             run=resp.json(),
@@ -535,6 +547,42 @@ class KernelClient:
             run=resp.json(),
             idempotent_replay=resp.headers.get("idempotent-replay") == "true",
         )
+
+    async def run_outcome(
+        self,
+        outcome_type: str,
+        *,
+        tenant_id: str | None = None,
+        fields: Mapping[str, str] | None = None,
+        files: Mapping[str, Sequence[UploadTuple]] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """POST /outcomes/{type}/run — explicit per-pack dispatch: the
+        caller picks the outcome (kernel stamps intent from the spec's
+        `intent_template`), spec context keys ride as plain form fields,
+        declared input slots as files. Hard-422s on missing required
+        inputs/context — surfacing them to the caller verbatim.
+
+        The product lane sends no Idempotency-Key here (the contract's
+        typed binding is `invoke_outcome`): transport never retries and
+        the ExecutionRunMap row's owner+key unique index is the dedupe.
+        Kernel `main` does dedupe (tenant, key) on this endpoint too —
+        contract_version/invocation_id fields are optional there."""
+        form_fields: list[tuple[str, tuple]] = []
+        if tenant_id:
+            form_fields.append(("tenant_id", (None, tenant_id)))
+        form_fields += [(name, (None, value)) for name, value in (fields or {}).items()]
+        form_fields += [(slot, (filename, body) if content_type is None else (filename, body, content_type)) for slot, members in (files or {}).items() for filename, body, content_type in members]
+        request_kwargs: dict[str, Any] = {"files": form_fields}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
+        resp = await self._request(
+            "POST",
+            f"/outcomes/{outcome_type}/run",
+            allow_retry=False,
+            **request_kwargs,
+        )
+        return resp.json()
 
     async def decide(
         self,

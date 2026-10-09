@@ -217,6 +217,53 @@ async def test_create_task_uploads_use_named_slots() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_task_forwards_context_fields() -> None:
+    rec = _Recorder([_json_response({"workrun_id": "wr-13"})])
+    client = _client(rec)
+    await client.create_task(
+        intent="đối soát",
+        fields={"mst": "0101", "ky": "2026-Q3"},
+    )
+    await client.aclose()
+
+    body = rec.requests[0].content
+    assert b'name="mst"' in body and b"0101" in body
+    assert b'name="ky"' in body and b"2026-Q3" in body
+
+
+@pytest.mark.asyncio
+async def test_run_outcome_posts_to_outcome_path_with_slots_and_context() -> None:
+    rec = _Recorder([_json_response({"workrun_id": "wr-20", "status": "running"})])
+    client = _client(rec)
+    view = await client.run_outcome(
+        "invoice_recon",
+        tenant_id="demo",
+        fields={"mst": "0101"},
+        files={"invoices_zip": [("inv.zip", b"PKfake", "application/zip")]},
+    )
+    await client.aclose()
+
+    assert view["workrun_id"] == "wr-20"
+    req = rec.requests[0]
+    assert req.method == "POST"
+    assert req.url.path == "/outcomes/invoice_recon/run"
+    assert b'name="tenant_id"' in req.content
+    assert b'name="mst"' in req.content
+    assert b'name="invoices_zip"; filename="inv.zip"' in req.content
+
+
+@pytest.mark.asyncio
+async def test_run_outcome_is_never_retried() -> None:
+    rec = _Recorder([httpx.ConnectError("refused"), _json_response({"workrun_id": "wr-x"})])
+    client = _client(rec)
+    with pytest.raises(httpx.TransportError):
+        await client.run_outcome("invoice_recon")
+    await client.aclose()
+
+    assert len(rec.requests) == 1
+
+
+@pytest.mark.asyncio
 async def test_create_task_sends_idempotency_key_and_parses_replay() -> None:
     rec = _Recorder([_json_response({"workrun_id": "wr-12"}, headers={"Idempotent-Replay": "true"})])
     client = _client(rec)

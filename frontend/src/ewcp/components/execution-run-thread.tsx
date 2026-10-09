@@ -6,6 +6,7 @@
 // /api/ewcp/runs/{id}/*. Decision buttons gate on the extension's
 // user-actor binding report.
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -14,8 +15,10 @@ import {
   getIdentity,
   getWorkrun,
   joinRunStream,
+  resumeRun,
   type ExecutionRun,
   type RunView,
+  type RunStreamEvent,
 } from "@/ewcp/api";
 import { statusLabel } from "@/ewcp/labels";
 
@@ -26,6 +29,20 @@ import { StudioCard } from "./studio-card";
 
 const LIVE_STATUSES = new Set(["launching", "running", "pending_interrupt"]);
 
+// Bounded render of parsed SSE frames — the run detail is blind
+// without them (A6 proposal #5): the raw event log is the floor before
+// structured agent-activity rendering lands.
+const MAX_STREAM_EVENTS = 50;
+
+function summarizeEventData(data: unknown): string {
+  if (typeof data === "string") return data;
+  try {
+    return JSON.stringify(data) ?? "";
+  } catch {
+    return "[unserializable event payload]";
+  }
+}
+
 export function ExecutionRunThread({
   executionRunId,
 }: {
@@ -35,6 +52,9 @@ export function ExecutionRunThread({
   const [workrun, setWorkrun] = useState<RunView | null>(null);
   const [canDecide, setCanDecide] = useState(false);
   const [streaming, setStreaming] = useState(false);
+  const [streamEvents, setStreamEvents] = useState<RunStreamEvent[]>([]);
+  const [resumeText, setResumeText] = useState("");
+  const [resuming, setResuming] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -86,6 +106,7 @@ export function ExecutionRunThread({
     joinRunStream(run.join_url, {
       signal: ctl.signal,
       onEvent: (ev) => {
+        setStreamEvents((prev) => [...prev, ev].slice(-MAX_STREAM_EVENTS));
         if (ev.event === "end" || ev.event === "error") ctl.abort();
       },
     })
@@ -104,6 +125,30 @@ export function ExecutionRunThread({
     // join once per run identity — the finally-refresh re-reads status
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run?.join_url, run?.run_id]);
+
+  const submitResume = useCallback(async () => {
+    const text = resumeText.trim();
+    if (!run || !text || resuming) return;
+    setResuming(true);
+    setErr(null);
+    try {
+      // The interrupt site owns the payload schema — accept JSON text or
+      // pass the plain string through (Command(resume=...) upstream).
+      let payload: unknown = text;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        // plain text stays a string
+      }
+      const updated = await resumeRun(run.execution_run_id, payload);
+      setRun(updated);
+      setResumeText("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setResuming(false);
+    }
+  }, [run, resumeText, resuming]);
 
   if (!run)
     return <p className="text-xs text-zinc-500">{err ?? "Đang tải run…"}</p>;
@@ -133,12 +178,60 @@ export function ExecutionRunThread({
         </div>
         <p className="mt-1 text-sm whitespace-pre-wrap">{run.intent}</p>
         <p className="mt-1 font-mono text-[10px] text-zinc-400">
-          {run.execution_run_id} · thread {run.thread_id.slice(0, 8)}…
+          {run.execution_run_id} ·{" "}
+          <Link
+            href={`/workspace/chats/${encodeURIComponent(run.thread_id)}`}
+            className="text-blue-500 underline"
+            title={run.thread_id}
+          >
+            thread {run.thread_id.slice(0, 8)}…
+          </Link>
           {run.run_id ? ` · run ${run.run_id.slice(0, 8)}…` : ""}
         </p>
       </header>
 
       {err && <p className="text-xs text-red-600">{err}</p>}
+
+      {run.status === "pending_interrupt" && (
+        <section className="space-y-2 rounded-lg border border-amber-300 bg-amber-50/60 p-4 dark:border-amber-800 dark:bg-amber-950/30">
+          <h3 className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+            Run đang chờ câu trả lời (interrupt)
+          </h3>
+          <textarea
+            value={resumeText}
+            onChange={(e) => setResumeText(e.target.value)}
+            rows={2}
+            placeholder="Câu trả lời — text thuần hoặc JSON theo contract của interrupt"
+            className="w-full rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 text-sm dark:border-zinc-600"
+          />
+          <button
+            type="button"
+            disabled={resuming || !resumeText.trim()}
+            onClick={() => void submitResume()}
+            className="rounded-md bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            {resuming ? "Đang gửi…" : "Tiếp tục"}
+          </button>
+        </section>
+      )}
+
+      {streamEvents.length > 0 && (
+        <details className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+          <summary className="cursor-pointer text-xs font-medium text-zinc-500">
+            Hoạt động agent ({streamEvents.length} sự kiện)
+          </summary>
+          <ul className="mt-2 space-y-1">
+            {streamEvents.map((ev, i) => (
+              <li key={i} className="font-mono text-[10px] text-zinc-500">
+                <span className="font-semibold text-zinc-600 dark:text-zinc-300">
+                  {ev.event}
+                </span>{" "}
+                {summarizeEventData(ev.data).slice(0, 200)}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {run.workrun_id && workrun && (
         <section className="space-y-3">

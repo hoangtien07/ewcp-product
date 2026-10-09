@@ -198,6 +198,34 @@ export async function listExecutionRuns(): Promise<ExecutionRun[]> {
   return body.runs;
 }
 
+/** Chat-page reverse lookup — which ExecutionRuns ride this thread.
+ * Server-side this is a map-store read (no foreground recovery). */
+export async function listRunsForThread(
+  threadId: string,
+): Promise<ExecutionRun[]> {
+  const body = await parse<{ runs: ExecutionRun[] }>(
+    await fetch(`${API}/runs?thread_id=${encodeURIComponent(threadId)}`),
+  );
+  return body.runs;
+}
+
+/** Submit an interrupt response for a run parked at `pending_interrupt`
+ * (the lead_agent's ask_human/clarification). `resume` is the raw JSON
+ * payload forwarded to AgentRuns.resume — for the agent's clarification
+ * questions the contract is a plain string answer. */
+export async function resumeRun(
+  executionRunId: string,
+  resume: unknown,
+): Promise<ExecutionRun> {
+  return parse(
+    await fetch(`${API}/runs/${encodeURIComponent(executionRunId)}/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resume }),
+    }),
+  );
+}
+
 export async function getExecutionRun(
   executionRunId: string,
   opts?: { refresh?: boolean },
@@ -214,14 +242,34 @@ export async function launchExecutionRun(args: {
   taskMode?: "general" | "governed";
   workrunId?: string;
   idempotencyKey?: string;
+  /** Governed dispatch: explicit pack — POSTs kernel
+   * `/outcomes/{type}/run` instead of router intake. */
+  outcomeType?: string;
+  /** Dev-mode kernels only: tenant carried as a form field (keyed
+   * kernels derive the tenant from the key and ignore this). */
+  tenantId?: string;
+  /** Thread attachments — general lane only (`files` field). */
   files?: File[];
+  /** Spec-declared context keys (mst, ky…) — plain form fields. */
+  fields?: Record<string, string>;
+  /** Governed slot uploads: field name per spec input (invoices_zip,
+   * books, …) — forwarded to kernel intake, NOT thread attachments. */
+  slotFiles?: Record<string, File[]>;
 }): Promise<{ run: ExecutionRun; idempotent_replay: boolean }> {
   const fd = new FormData();
   fd.set("intent", args.intent);
   if (args.taskMode) fd.set("task_mode", args.taskMode);
   if (args.workrunId) fd.set("workrun_id", args.workrunId);
   if (args.idempotencyKey) fd.set("idempotency_key", args.idempotencyKey);
+  if (args.outcomeType) fd.set("outcome_type", args.outcomeType);
+  if (args.tenantId) fd.set("tenant_id", args.tenantId);
+  for (const [name, value] of Object.entries(args.fields ?? {})) {
+    fd.set(name, value);
+  }
   for (const f of args.files ?? []) fd.append("files", f);
+  for (const [slot, members] of Object.entries(args.slotFiles ?? {})) {
+    for (const f of members) fd.append(slot, f);
+  }
   return parse(await fetch(`${API}/runs`, { method: "POST", body: fd }));
 }
 

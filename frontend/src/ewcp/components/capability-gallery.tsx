@@ -22,11 +22,16 @@ export function CapabilityGallery({
   specs,
   busy,
   onIntent,
+  onGoverned,
 }: {
   specs: OutcomeSpecView[];
   busy: boolean;
   /** fills the intent box with the starter text */
   onIntent: (text: string) => void;
+  /** picks the card's pack for governed intake — the slot-aware panel
+   * opens under the intent box (A6: governed runs must be creatable
+   * from the UI, not curl-only). */
+  onGoverned: (spec: OutcomeSpecView) => void;
 }) {
   const comingSoon = !specs.some(
     (s) => s.outcome_type === COMING_SOON.outcomeType,
@@ -82,6 +87,16 @@ export function CapabilityGallery({
                   ))}
                 </div>
               )}
+              <div className="mt-auto pt-1">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onGoverned(s)}
+                  className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  Chạy governed
+                </button>
+              </div>
             </article>
           );
         })}

@@ -77,6 +77,7 @@ import {
 } from "@/core/threads/token-usage";
 import { projectIdOfThread, textOfMessage } from "@/core/threads/utils";
 import { env } from "@/env";
+import { listRunsForThread, type ExecutionRun } from "@/ewcp/api";
 import { cn } from "@/lib/utils";
 
 import { ChatBox } from "./chat-box";
@@ -467,6 +468,11 @@ export default function ChatPage() {
                 {affiliatedProjectId && (
                   <ProjectAffiliationBadge projectId={affiliatedProjectId} />
                 )}
+                {!isNewThread &&
+                  !isMock &&
+                  env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (
+                    <ThreadExecutionRunBadge threadId={threadId} />
+                  )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {!isNewThread &&
@@ -700,5 +706,42 @@ function ProjectAffiliationBadge({ projectId }: { projectId: string }) {
       <Folder className="size-3 shrink-0" />
       <span className="truncate">{project.name}</span>
     </Link>
+  );
+}
+
+/**
+ * Small chip(s) in the chat header linking back to the ExecutionRun(s)
+ * that ride this thread — the reverse half of the run↔thread
+ * cross-reference (A6 proposal #3). A lookup failure degrades silently:
+ * an extension-less deployment simply shows no chip.
+ */
+function ThreadExecutionRunBadge({ threadId }: { threadId: string }) {
+  const [runs, setRuns] = useState<ExecutionRun[]>([]);
+  useEffect(() => {
+    let alive = true;
+    listRunsForThread(threadId)
+      .then((r) => {
+        if (alive) setRuns(r);
+      })
+      .catch(() => {
+        if (alive) setRuns([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [threadId]);
+  return (
+    <>
+      {runs.map((r) => (
+        <Link
+          key={r.execution_run_id}
+          href={`/workspace/ewcp-runs/${encodeURIComponent(r.execution_run_id)}`}
+          title={r.intent}
+          className="text-muted-foreground hover:text-foreground inline-flex max-w-40 shrink-0 items-center gap-1 truncate rounded-full border px-2 py-0.5 text-xs font-normal transition-colors"
+        >
+          EWCP · {r.task_mode}
+        </Link>
+      ))}
+    </>
   );
 }
