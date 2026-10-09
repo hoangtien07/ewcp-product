@@ -36,7 +36,7 @@ export function ExecutionRunList({
     return <p className="text-muted-foreground text-xs">Đang tải…</p>;
   if (runs.length === 0)
     return (
-      <p className="text-muted-foreground text-xs">Chưa có ExecutionRun nào.</p>
+      <p className="text-muted-foreground text-xs">Chưa có công việc nào.</p>
     );
 
   return (

@@ -103,6 +103,9 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
 
   return (
     <div className="space-y-4">
+      {/* A6-11: "Kiểm chứng" is the reserved name for the governed
+          verification surfaces — the general workspace stays "Công việc" */}
+      <h1 className="text-base font-semibold">Kiểm chứng</h1>
       <div className="border-border bg-card rounded-lg border p-4">
         <h2 className="text-sm font-semibold">
           Tra cứu bằng chứng niêm phong — link công khai
@@ -232,7 +235,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
 
       <div className="border-border bg-card rounded-lg border p-4">
         <h2 className="text-sm font-semibold">
-          Xác minh độc lập — verify-by-them
+          Kiểm chứng độc lập — tải lên bằng chứng
         </h2>
         <p className="text-muted-foreground mt-1 text-xs">
           Upload evidence export của run cùng các artifact. Hệ thống đo lại
@@ -290,7 +293,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
           onClick={runVerify}
           disabled={busy || !evidenceFile || artifactFiles.length === 0}
         >
-          {busy ? "Đang xác minh…" : "Xác minh"}
+          {busy ? "Đang kiểm chứng…" : "Kiểm chứng"}
         </Button>
         {err && <p className="text-destructive mt-2 text-xs">{err}</p>}
       </div>

@@ -71,7 +71,7 @@ export function ManifestCard({
       <VerifiedSealBadge manifestHash={hash} />
       {checks.length > 0 && (
         <div className="border-border bg-card rounded-lg border p-3 text-xs">
-          <div className="mb-2 font-semibold">Validator checks</div>
+          <div className="mb-2 font-semibold">Kết quả kiểm chứng</div>
           <ul className="space-y-1">
             {checks.map((c, i) => (
               <li key={i} className="flex gap-2">
@@ -109,7 +109,7 @@ export function ManifestCard({
             href={`/verify/${encodeURIComponent(hash)}`}
             className="text-primary inline-block text-xs font-medium underline"
           >
-            Mở trang verify — khách tự kiểm chứng →
+            Mở trang kiểm chứng — khách tự tra cứu →
           </a>
           <ShareVerifyLink manifestHash={hash} />
         </>

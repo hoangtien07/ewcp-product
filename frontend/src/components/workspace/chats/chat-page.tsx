@@ -78,6 +78,7 @@ import {
 import { projectIdOfThread, textOfMessage } from "@/core/threads/utils";
 import { env } from "@/env";
 import { listRunsForThread, type ExecutionRun } from "@/ewcp/api";
+import { taskModeLabel } from "@/ewcp/labels";
 import { cn } from "@/lib/utils";
 
 import { ChatBox } from "./chat-box";
@@ -739,7 +740,7 @@ function ThreadExecutionRunBadge({ threadId }: { threadId: string }) {
           title={r.intent}
           className="text-muted-foreground hover:text-foreground inline-flex max-w-40 shrink-0 items-center gap-1 truncate rounded-full border px-2 py-0.5 text-xs font-normal transition-colors"
         >
-          EWCP · {r.task_mode}
+          Công việc · {taskModeLabel(r.task_mode)}
         </Link>
       ))}
     </>

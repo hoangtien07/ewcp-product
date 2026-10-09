@@ -83,7 +83,7 @@ describe("CapabilityGallery", () => {
     expect(screen.queryByText(/Sắp có/)).toBeNull();
   });
 
-  test("Chạy governed button calls onGoverned with the card's spec", () => {
+  test("Chạy kiểm chứng button calls onGoverned with the card's spec", () => {
     const onGoverned = rs.fn();
     render(
       <CapabilityGallery
@@ -93,7 +93,7 @@ describe("CapabilityGallery", () => {
         onGoverned={onGoverned}
       />,
     );
-    fireEvent.click(screen.getByText("Chạy governed"));
+    fireEvent.click(screen.getByText("Chạy kiểm chứng"));
     expect(onGoverned).toHaveBeenCalledTimes(1);
     expect(onGoverned.mock.calls[0]![0].outcome_type).toBe("invoice_recon");
   });

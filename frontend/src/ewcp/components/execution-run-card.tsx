@@ -8,7 +8,7 @@
 // surface.
 
 import type { ExecutionRun } from "@/ewcp/api";
-import { lifecycleStatus } from "@/ewcp/labels";
+import { lifecycleStatus, taskModeLabel } from "@/ewcp/labels";
 
 import { LifecycleBadge } from "./lifecycle-badge";
 
@@ -46,11 +46,7 @@ export function ExecutionRunCard({
           )}
         </span>
         <span className="text-muted-foreground text-[10px]">
-          {run.task_mode === "governed"
-            ? "governed"
-            : run.task_mode === "invoke"
-              ? "invoke"
-              : "general"}
+          {taskModeLabel(run.task_mode)}
         </span>
       </div>
       <p className="mt-1 line-clamp-2 text-sm">{run.intent}</p>

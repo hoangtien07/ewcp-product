@@ -38,7 +38,7 @@ export function WorkspaceNavChatList() {
           >
             <Link className="text-muted-foreground" href="/workspace/ewcp-runs">
               <ShieldCheckIcon />
-              <span>EWCP</span>
+              <span>Công việc</span>
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>

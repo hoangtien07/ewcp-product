@@ -93,7 +93,7 @@ describe("ManifestCard share flow", () => {
     const writeText = rs.fn((_text: string) => Promise.resolve());
     stubClipboard(writeText);
     render(<ManifestCard run={verifiedRun} executionRunId="er-1" />);
-    const btn = await screen.findByText("Chia sẻ link xác minh");
+    const btn = await screen.findByText("Chia sẻ link kiểm chứng");
     fireEvent.click(btn);
     await waitFor(() => expect(screen.getByText("Đã copy link")).toBeTruthy());
     const url = writeText.mock.calls[0]![0];
@@ -107,6 +107,6 @@ describe("ManifestCard share flow", () => {
         executionRunId="er-1"
       />,
     );
-    expect(screen.queryByText("Chia sẻ link xác minh")).toBeNull();
+    expect(screen.queryByText("Chia sẻ link kiểm chứng")).toBeNull();
   });
 });

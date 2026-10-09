@@ -7,7 +7,7 @@ export function VerifiedSealBadge({ manifestHash }: { manifestHash: string }) {
   return (
     <div className="rounded-md border-2 border-emerald-600 bg-emerald-50 px-3 py-2 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
       <div className="text-sm font-bold tracking-wide">
-        VERIFIED — đã niêm phong
+        KIỂM CHỨNG — đã niêm phong
       </div>
       <div className="mt-0.5 font-mono text-xs break-all">
         manifest_hash: {manifestHash}

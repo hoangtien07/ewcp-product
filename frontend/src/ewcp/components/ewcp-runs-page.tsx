@@ -114,7 +114,7 @@ export function EwcpRunsPage({
   return (
     <div className="mx-auto grid max-w-5xl gap-6 p-6 md:grid-cols-[280px_1fr]">
       <aside className="space-y-3">
-        <h1 className="text-sm font-semibold">ExecutionRuns</h1>
+        <h1 className="text-sm font-semibold">Công việc</h1>
         <ExecutionRunList
           activeId={activeId ?? undefined}
           refreshKey={refreshKey}

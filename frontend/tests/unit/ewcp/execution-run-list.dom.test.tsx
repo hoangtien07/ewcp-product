@@ -60,7 +60,7 @@ describe("ExecutionRunList", () => {
     stubList([]);
     render(<ExecutionRunList onSelect={rs.fn()} />);
     await waitFor(() =>
-      expect(screen.getByText(/Chưa có ExecutionRun/)).toBeTruthy(),
+      expect(screen.getByText(/Chưa có công việc/)).toBeTruthy(),
     );
   });
 
