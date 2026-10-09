@@ -142,11 +142,35 @@ export interface OutcomeInputSpec {
   required: boolean;
 }
 
+/** A spec-declared context key (kernel ContextField): plain-text form
+ * value — the kernel coerces by `type` and applies `default`. */
+export interface OutcomeContextField {
+  name: string;
+  type?: string; // str | int | float | bool (kernel coerces)
+  required?: boolean;
+  default?: unknown;
+  label_vn?: string;
+}
+
 export interface OutcomeSpecView {
   outcome_type: string;
   description: string;
   required_checks: string[];
   requires_inputs: OutcomeInputSpec[];
+  /** Context keys the kernel rejects as missing at intake (422). Older
+   * kernels expose them only on the A5a descriptor —
+   * `listOutcomes` normalizes both shapes onto this field. */
+  required_context: string[];
+  /** Typed context fields (label/default/type) — pane-facing form spec. */
+  context_schema: OutcomeContextField[];
+  /** WP-A5a descriptor blob — source of the normalized fields above on
+   * kernels that nest them under `input_schema`. */
+  capability?: {
+    input_schema?: {
+      required_context?: string[];
+      context?: OutcomeContextField[];
+    };
+  };
 }
 
 export interface PermalinkDeliverable {
@@ -328,20 +352,36 @@ export async function getEvidence(
   );
 }
 
+/** Statuses worth ONE client-side retry on a decision POST: the first
+ * approve can race the kernel's decision projection (observed E2E: a
+ * transient empty 400 whose identical retry succeeded). Auth/authz and
+ * validation failures are not retried — they never self-heal. */
+const DECISION_RETRYABLE = new Set([400, 409, 429, 500, 502, 503, 504]);
+
 export async function submitDecision(
   executionRunId: string,
   args: { answer: string; decisionId?: string },
 ): Promise<RunView> {
-  return parse(
-    await fetch(`${API}/runs/${encodeURIComponent(executionRunId)}/decisions`, {
+  const post = () =>
+    fetch(`${API}/runs/${encodeURIComponent(executionRunId)}/decisions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         answer: args.answer,
         decision_id: args.decisionId ?? null,
       }),
-    }),
-  );
+    });
+  try {
+    return await parse(await post());
+  } catch (e) {
+    const retryable =
+      e instanceof EwcpError
+        ? DECISION_RETRYABLE.has(e.status)
+        : e instanceof TypeError; // transport-level failure
+    if (!retryable) throw e;
+    await new Promise((r) => setTimeout(r, 700));
+    return parse(await post());
+  }
 }
 
 export async function downloadDeliverable(
@@ -366,7 +406,17 @@ export async function listOutcomes(): Promise<OutcomeSpecView[]> {
   const body = await parse<{ outcomes: OutcomeSpecView[] }>(
     await fetch(`${API}/outcomes`),
   );
-  return body.outcomes;
+  // required_context/context_schema ride the top-level view on newer
+  // kernels; older kernels only carry them nested on the A5a
+  // descriptor (`capability.input_schema`). Normalize so the intake
+  // form always sees the keys it must collect.
+  return body.outcomes.map((o) => ({
+    ...o,
+    required_context:
+      o.required_context ?? o.capability?.input_schema?.required_context ?? [],
+    context_schema:
+      o.context_schema ?? o.capability?.input_schema?.context ?? [],
+  }));
 }
 
 export async function verifyArtifacts(args: {

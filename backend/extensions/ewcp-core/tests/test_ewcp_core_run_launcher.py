@@ -320,6 +320,72 @@ async def test_crash_resume_replays_start_on_same_thread(launcher, store) -> Non
     assert out.record.run_id == "run-1"
 
 
+@pytest.mark.asyncio
+async def test_replay_binds_fresh_workrun_onto_admitted_row(launcher, store) -> None:
+    """F3 (A6 browser-E2E): a governed create whose map row got admitted
+    (run_id set) but never bound its workrun stays invisible to the
+    `?workrun_ids=` list projection forever — the list badge can never
+    show 'Đã niêm phong'. A retry carrying a freshly minted workrun_id
+    must bind it onto the stored row instead of dropping the id."""
+    runs = FakeAgentRuns()
+    # Governed launch whose kernel mint call failed AFTER the row was
+    # admitted — the route retried, minted wr-late, and re-entered launch().
+    record = await store.insert(
+        ExecutionRunRecord.new(
+            thread_id="thread-gov",
+            task_mode="governed",
+            status=ExecutionRunStatus.RUNNING,
+            idempotency_key="k-gov",
+            created_by="u-1",
+            intent="đối soát",
+        )
+    )
+    await store.update_admission(record.execution_run_id, run_id="run-admitted", status=ExecutionRunStatus.RUNNING)
+    assert (await store.get(record.execution_run_id)).workrun_id is None
+
+    out = await launcher.launch(
+        agent_runs=runs,
+        intent="đối soát",
+        mode=TaskMode.GOVERNED,
+        created_by="u-1",
+        idempotency_key="k-gov",
+        workrun_id="wr-late",
+    )
+    assert out.idempotent_replay is True
+    assert len(runs.started) == 0  # still a pure replay
+    assert out.record.workrun_id == "wr-late"
+    assert (await store.get(record.execution_run_id)).workrun_id == "wr-late"
+
+
+@pytest.mark.asyncio
+async def test_crash_resume_binds_fresh_workrun(launcher, store) -> None:
+    """Same F3 hole on the resume path: run_id NULL row + fresh
+    workrun_id must get bound before admission resumes."""
+    runs = FakeAgentRuns()
+    record = await store.insert(
+        ExecutionRunRecord.new(
+            thread_id="thread-crash2",
+            task_mode="governed",
+            status=ExecutionRunStatus.LAUNCHING,
+            idempotency_key="k-crash2",
+            created_by="u-1",
+            intent="đối soát",
+        )
+    )
+
+    out = await launcher.launch(
+        agent_runs=runs,
+        intent="đối soát",
+        mode=TaskMode.GOVERNED,
+        created_by="u-1",
+        idempotency_key="k-crash2",
+        workrun_id="wr-late2",
+    )
+    assert out.idempotent_replay is False
+    assert runs.started[0]["thread_id"] == "thread-crash2"
+    assert (await store.get(record.execution_run_id)).workrun_id == "wr-late2"
+
+
 # ---------------------------------------------------------------------------
 # pending interrupt != complete
 # ---------------------------------------------------------------------------

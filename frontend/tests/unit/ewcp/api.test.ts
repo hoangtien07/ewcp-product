@@ -139,6 +139,36 @@ describe("ewcp api", () => {
     });
   });
 
+  test("submitDecision retries once on a transient empty 400 (F4)", async () => {
+    // E2E F4: the first approve POST can return a bare 400 while the
+    // kernel's decision projection catches up — one retry must ride out
+    // the race instead of surfacing the failure.
+    let calls = 0;
+    const fetchMock = rs.fn((_u: string, _i?: RequestInit) => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response("", { status: 400 })
+          : jsonResponse({ workrun_id: "wr-1", status: "verified" }),
+      );
+    });
+    rs.stubGlobal("fetch", fetchMock);
+    const out = await submitDecision("er-1", { answer: "approve" });
+    expect(calls).toBe(2);
+    expect(out.status).toBe("verified");
+  });
+
+  test("submitDecision does not retry a definitive rejection (F4)", async () => {
+    const fetchMock = rs.fn((_u: string, _i?: RequestInit) =>
+      Promise.resolve(jsonResponse({ detail: "run is running" }, 422)),
+    );
+    rs.stubGlobal("fetch", fetchMock);
+    await expect(
+      submitDecision("er-1", { answer: "approve" }),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   test("verifyPermalink hits the proxy route", async () => {
     const fetchMock = rs.fn((_u: string) =>
       Promise.resolve(

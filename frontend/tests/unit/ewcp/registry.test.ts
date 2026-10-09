@@ -11,6 +11,8 @@ const a: OutcomeSpecView = {
     { name: "invoices_zip", accept: ".zip", label_vn: "z", required: true },
     { name: "books", accept: ".csv", label_vn: "b", required: true },
   ],
+  required_context: [],
+  context_schema: [],
 };
 describe("registry", () => {
   test("isZipInput detects .zip in the accept list", () => {
