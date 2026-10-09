@@ -29,11 +29,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 import pytest_asyncio
 from deerflow_extension_api.agent_runs import AgentRunError
 from deerflow_extension_api.auth import EXTENSION_PRINCIPAL_RESOLVER_KEY, ExtensionPrincipal
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -443,6 +444,37 @@ def _route_app(service: EwcpCoreService, *, principal: ExtensionPrincipal | None
         from deerflow_extension_api.agent_runs import AGENT_RUNS_RESOLVER_KEY
 
         setattr(app.state, AGENT_RUNS_RESOLVER_KEY, lambda request: runs)
+
+        # F1 seam: resume admits through HttpRunStarter -> POST
+        # /api/threads/{id}/runs on the request's own origin — the fake
+        # upstream delegates to FakeAgentRuns.resume so route tests keep
+        # asserting against the same recorded mutations.
+        @app.post("/api/threads/{thread_id}/runs")
+        async def _upstream_run_create(thread_id: str, request: Request):
+            body = await request.json()
+            command = body.get("command") or {}
+            run = await runs.resume(
+                thread_id=thread_id,
+                resume=command.get("resume"),
+                idempotency_key=request.headers.get("Idempotency-Key"),
+            )
+            return {"run_id": run.run_id, "thread_id": thread_id, "assistant_id": None, "status": run.status}
+
+    # The route builds a real httpx client on request.base_url — swap it
+    # for an in-process ASGI transport so the TestClient serves its own
+    # upstream hop (production: nginx proxies /api/* same-origin).
+    import ewcp_core.plugin as plugin_module
+
+    def _asgi_client(request: Request) -> httpx.AsyncClient:
+        headers = {name: request.headers[name] for name in ("cookie", "authorization", "x-csrf-token") if name in request.headers}
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+            headers=headers,
+            timeout=60.0,
+        )
+
+    plugin_module.request_scoped_client = _asgi_client
     return app
 
 
@@ -541,3 +573,58 @@ async def test_resume_route_resumes_pending_run(store) -> None:
         assert runs.resumed[0]["idempotency_key"] == "rs-1"
     finally:
         await service.stop()
+
+
+# ---------------------------------------------------------------------------
+# F1 — resume carries the same recursion budget (GP01_EVAL F1; upstream
+# resume admits a NEW run on the same thread, so a resume without config
+# would fall back to the server default 100 and die on long tool loops).
+# ---------------------------------------------------------------------------
+
+
+class FakeRunStarter:
+    """RunStarter stand-in for the resume path."""
+
+    def __init__(self) -> None:
+        self.resumed: list[dict] = []
+
+    async def resume(self, *, thread_id, resume, config=None, idempotency_key=None) -> FakeAgentRun:
+        self.resumed.append(
+            {
+                "thread_id": thread_id,
+                "resume": resume,
+                "config": config,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return FakeAgentRun(thread_id, "run-resumed-http", status="running")
+
+
+@pytest.mark.asyncio
+async def test_resume_via_starter_forwards_recursion_limit(recovery, store) -> None:
+    rec = await _seed(store, thread_id="t-int", run_id="r-old", status=ExecutionRunStatus.PENDING_INTERRUPT)
+    runs = FakeAgentRuns()
+    runs.run_status["r-old"] = "interrupted"
+    runs.thread_state["t-int"] = {"interrupts": [{"id": "i-1", "value": "approve?"}]}
+    starter = FakeRunStarter()
+
+    out = await recovery.resume(
+        agent_runs=runs,
+        created_by="u-1",
+        execution_run_id=rec.execution_run_id,
+        resume={"answer": "approve"},
+        idempotency_key="resume-1",
+        starter=starter,
+    )
+
+    assert starter.resumed == [
+        {
+            "thread_id": "t-int",
+            "resume": {"answer": "approve"},
+            "config": {"recursion_limit": 1000},
+            "idempotency_key": "resume-1",
+        }
+    ]
+    assert runs.resumed == []  # bound contract resume not used when a starter is bound
+    assert out.run_id == "run-resumed-http"
+    assert out.status == ExecutionRunStatus.RUNNING

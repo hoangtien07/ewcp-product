@@ -45,6 +45,7 @@ from deerflow_extension_api.agent_runs import AgentRunError
 
 from .execution_run_store import ExecutionRunRecord, ExecutionRunStore
 from .run_launcher import (
+    DEFAULT_RUN_RECURSION_LIMIT,
     ENDED_RUN_STATUSES,
     EWCP_RUNS_NAMESPACE,
     REFRESH_FINAL,
@@ -56,6 +57,8 @@ from .run_launcher import (
 
 if TYPE_CHECKING:
     from deerflow_extension_api.agent_runs import AgentRuns
+
+    from .run_launcher import RunStarter
 
 logger = logging.getLogger(__name__)
 
@@ -137,9 +140,10 @@ class RunRecovery:
     requests.
     """
 
-    def __init__(self, store: ExecutionRunStore, *, plugin_namespace: str = EWCP_RUNS_NAMESPACE) -> None:
+    def __init__(self, store: ExecutionRunStore, *, plugin_namespace: str = EWCP_RUNS_NAMESPACE, recursion_limit: int = DEFAULT_RUN_RECURSION_LIMIT) -> None:
         self._store = store
         self._namespace = plugin_namespace
+        self._recursion_limit = recursion_limit
 
     # -- reads ---------------------------------------------------------------
 
@@ -205,6 +209,7 @@ class RunRecovery:
         execution_run_id: str,
         resume: Any,
         idempotency_key: str | None = None,
+        starter: RunStarter | None = None,
     ) -> ExecutionRunRecord:
         """Submit an interrupt response, gated on real pending state.
 
@@ -234,7 +239,18 @@ class RunRecovery:
                 await self._store.update_status(record.execution_run_id, status.value)
             raise ResumeNotPending(f"thread is not awaiting input (run status {run.status!r})")
         try:
-            agent_run = await runs.resume(thread_id=record.thread_id, resume=resume, idempotency_key=idempotency_key)
+            if starter is not None:
+                # F1: resume admits a NEW run on the same thread — carry the
+                # same recursion budget (the bound resume has no config
+                # channel either).
+                agent_run = await starter.resume(
+                    thread_id=record.thread_id,
+                    resume=resume,
+                    config={"recursion_limit": self._recursion_limit},
+                    idempotency_key=idempotency_key,
+                )
+            else:
+                agent_run = await runs.resume(thread_id=record.thread_id, resume=resume, idempotency_key=idempotency_key)
         except AgentRunError as exc:
             raise self._translate(exc) from exc
         # Upstream resume admits a NEW run on the same thread — rebind the

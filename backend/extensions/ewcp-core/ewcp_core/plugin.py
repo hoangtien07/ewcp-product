@@ -27,13 +27,22 @@ from deerflow_extension_api.agent_runs import AgentRunError, resolve_agent_runs
 from deerflow_extension_api.auth import resolve_principal
 from fastapi import APIRouter, HTTPException, Request
 
-from .api_routes import build_api_router
+from .api_routes import build_api_router, request_scoped_client
 from .egress_policy import EgressPolicy
 from .execution_run_store import ExecutionRunStore
 from .kernel_client import KernelClient, KernelClientConfig
-from .model_policy import BudgetAdmissionMiddleware, KernelBudgetClient, ModelPolicyConfig
+from .model_policy import BudgetAdmissionMiddleware, KernelBudgetClient, ModelPolicyConfig, TransientRetryPolicy
 from .recovery import RecoveryDenied, ResumeNotPending, RunNotOwned, RunRecovery
-from .run_launcher import RunLauncher, ThreadUploads
+from .run_launcher import DEFAULT_RUN_RECURSION_LIMIT, HttpRunStarter, RunLauncher, RunStarter, ThreadUploads
+
+
+def _resolve_recursion_limit(value: Any) -> int:
+    """`general_recursion_limit`: positive int or the UI-matching default."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_RUN_RECURSION_LIMIT
+    return parsed if parsed > 0 else DEFAULT_RUN_RECURSION_LIMIT
 
 
 class EwcpCoreService:
@@ -62,6 +71,8 @@ class EwcpCoreService:
             kernel_url=self._resolved.kernel_url,
         )
         self._model_policy = ModelPolicyConfig.resolve(self.config)
+        self._transient_retry = TransientRetryPolicy.resolve(self.config)
+        self._run_recursion_limit = _resolve_recursion_limit(self.config.get("general_recursion_limit"))
         self._client: KernelClient | None = None
         self._store: ExecutionRunStore | None = None
         self._launcher: RunLauncher | None = None
@@ -108,12 +119,19 @@ class EwcpCoreService:
             return str(budget["tenant_id"])
         return None
 
-    def new_launcher(self, uploader: ThreadUploads | None = None) -> RunLauncher | None:
-        """Per-request launcher: the shared store plus an uploads seam
-        bound to the caller's credentials (HttpThreadUploads)."""
+    @property
+    def run_recursion_limit(self) -> int:
+        """`general_recursion_limit` — the recursion budget forwarded on every
+        run the extension admits (F1; defaults to the chat UI's 1000)."""
+        return self._run_recursion_limit
+
+    def new_launcher(self, uploader: ThreadUploads | None = None, starter: RunStarter | None = None) -> RunLauncher | None:
+        """Per-request launcher: the shared store plus uploads/run-admission
+        seams bound to the caller's credentials (HttpThreadUploads /
+        HttpRunStarter)."""
         if self._store is None:
             return None
-        return RunLauncher(self._store, uploader=uploader)
+        return RunLauncher(self._store, uploader=uploader, starter=starter, recursion_limit=self._run_recursion_limit)
 
     async def start(self, deps: ExtensionRuntimeDeps) -> None:
         if self._resolved.kernel_url:
@@ -122,8 +140,8 @@ class EwcpCoreService:
         if session_factory is not None:
             self._store = ExecutionRunStore(session_factory)
             await self._store.ensure_schema()
-            self._launcher = RunLauncher(self._store)
-            self._recovery = RunRecovery(self._store)
+            self._launcher = RunLauncher(self._store, recursion_limit=self._run_recursion_limit)
+            self._recovery = RunRecovery(self._store, recursion_limit=self._run_recursion_limit)
 
     async def stop(self) -> None:
         if self._client is not None:
@@ -139,6 +157,7 @@ class EwcpCoreService:
             KernelBudgetClient(lambda: self._client),
             self._model_policy,
             policy,
+            retry=self._transient_retry,
         )
         return (MiddlewarePlacement(middleware, Placement.MODEL_PHYSICAL, AgentScope.BOTH, intercepting=True),)
 
@@ -157,6 +176,7 @@ class EwcpCoreService:
             "recovery_started": self._recovery is not None,
             "budget_cap_usd": str(self._model_policy.cap_usd) if self._model_policy.cap_usd is not None else None,
             "budget_admission_enabled": self._model_policy.cap_usd is not None,
+            "general_recursion_limit": self._run_recursion_limit,
             "general_on_policy_unavailable": self._model_policy.general_on_policy_unavailable,
         }
 
@@ -258,6 +278,7 @@ def build_router(service: EwcpCoreService) -> APIRouter:
             raise HTTPException(422, "resume requires a JSON object body") from exc
         if not isinstance(body, dict) or "resume" not in body:
             raise HTTPException(422, "resume requires a JSON object body with a 'resume' field")
+        resume_client = request_scoped_client(request)
         try:
             record = await _recovery_or_503(service).resume(
                 agent_runs=runs,
@@ -265,6 +286,7 @@ def build_router(service: EwcpCoreService) -> APIRouter:
                 execution_run_id=execution_run_id,
                 resume=body["resume"],
                 idempotency_key=body.get("idempotency_key"),
+                starter=HttpRunStarter(resume_client),
             )
         except RecoveryDenied as exc:
             raise HTTPException(403, str(exc)) from exc
@@ -274,6 +296,8 @@ def build_router(service: EwcpCoreService) -> APIRouter:
             raise HTTPException(409, str(exc)) from exc
         except AgentRunError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
+        finally:
+            await resume_client.aclose()
         return _record_view(record)
 
     # NOTE: not `router.include_router(build_api_router(service))` —
