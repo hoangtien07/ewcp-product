@@ -38,7 +38,7 @@ export function GovernedIntake({
   return (
     <section
       className="space-y-3 rounded-lg border border-emerald-300 bg-emerald-50/60 p-4 dark:border-emerald-800 dark:bg-emerald-950/30"
-      aria-label={`Chạy governed: ${outcomeLabel(spec.outcome_type)}`}
+      aria-label={`Chạy kiểm chứng: ${outcomeLabel(spec.outcome_type)}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div>
@@ -101,7 +101,7 @@ export function GovernedIntake({
         onClick={() => onLaunch(slots)}
         className="bg-emerald-600 text-white hover:bg-emerald-700"
       >
-        {busy ? "Đang chạy…" : "Chạy governed"}
+        {busy ? "Đang chạy…" : "Chạy kiểm chứng"}
       </Button>
     </section>
   );

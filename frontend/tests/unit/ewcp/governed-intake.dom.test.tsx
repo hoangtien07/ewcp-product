@@ -64,7 +64,7 @@ describe("GovernedIntake", () => {
         onLaunch={onLaunch}
       />,
     );
-    const submit = screen.getByText("Chạy governed");
+    const submit = screen.getByText("Chạy kiểm chứng");
     expect((submit as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/Còn thiếu đầu vào bắt buộc/)).toBeTruthy();
 
@@ -92,7 +92,7 @@ describe("GovernedIntake", () => {
     pick(fileInputFor("Zip A"), ["a.zip"]);
     pick(fileInputFor("Zip B"), ["b.zip"]);
     expect(screen.getByText(/một trường zip/)).toBeTruthy();
-    expect(screen.getByText("Chạy governed").hasAttribute("disabled")).toBe(
+    expect(screen.getByText("Chạy kiểm chứng").hasAttribute("disabled")).toBe(
       true,
     );
     expect(onLaunch).not.toHaveBeenCalled();

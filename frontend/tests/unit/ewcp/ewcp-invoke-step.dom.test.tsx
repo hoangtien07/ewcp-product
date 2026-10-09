@@ -127,7 +127,7 @@ describe("EwcpInvokeStep (A6 #13 hybrid lane)", () => {
     const { container } = render(
       <EwcpInvokeStep args={{ outcome_type: "invoice_recon" }} />,
     );
-    expect(container.textContent).toContain("EWCP · Đối soát hóa đơn");
+    expect(container.textContent).toContain("Kiểm chứng · Đối soát hóa đơn");
     expect(container.querySelector("pre")).toBeNull();
   });
 });
@@ -137,7 +137,7 @@ describe("MessageGroup tool-render seam", () => {
     const { container } = renderGroup(
       invokeGroupMessages(JSON.stringify(OK_PAYLOAD)),
     );
-    expect(container.textContent).toContain("EWCP · Đối soát hóa đơn");
+    expect(container.textContent).toContain("Kiểm chứng · Đối soát hóa đơn");
     expect(container.textContent).toContain("cap:invoice_recon");
     const link = container.querySelector(
       "a[href='/workspace/ewcp-runs/er_abc123']",
@@ -157,7 +157,7 @@ describe("MessageGroup tool-render seam", () => {
     ]);
     // generic label + details disclosure, no ewcp card markup
     expect(container.textContent).toContain('Use "mcp_custom" tool');
-    expect(container.textContent).not.toContain("EWCP ·");
+    expect(container.textContent).not.toContain("Kiểm chứng ·");
     expect(container.textContent).not.toContain("Đã niêm phong");
   });
 });

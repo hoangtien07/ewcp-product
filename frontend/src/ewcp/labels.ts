@@ -40,7 +40,7 @@ export const OUTCOME_LABEL: Record<string, string> = {
   dossier_check: "Kiểm tra chứng từ",
   three_way_match: "Đối chiếu 3 chiều",
   bank_recon: "Đối chiếu sao kê ngân hàng",
-  general: "Lane tổng quát",
+  general: "Công việc tổng quát",
 };
 
 // Deliverable.kind → Vietnamese chip in the workspace deliverables list.
@@ -119,6 +119,21 @@ export const THREE_WAY_FLAG_LABEL: Record<string, string> = {
 
 export function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
+}
+
+// ExecutionRun.task_mode → Vietnamese lane name (run-list chip, thread
+// header, chat badge). governed = the contract-bound lane whose outcome
+// is a sealed manifest; invoke = a governed capability launched from a
+// chat thread (A6 #13). "Kiểm chứng" is reserved for these governed
+// verification surfaces — the free-form workspace stays "Công việc".
+export const TASK_MODE_LABEL: Record<string, string> = {
+  general: "tổng quát",
+  governed: "kiểm chứng",
+  invoke: "kiểm chứng từ chat",
+};
+
+export function taskModeLabel(mode: string): string {
+  return TASK_MODE_LABEL[mode] ?? mode;
 }
 
 // ---------------------------------------------------------------------------

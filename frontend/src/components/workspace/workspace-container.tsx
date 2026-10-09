@@ -23,6 +23,7 @@ import { Tooltip } from "./tooltip";
 const LINKABLE_SECTIONS: Record<string, true> = {
   agents: true,
   chats: true,
+  "ewcp-runs": true,
   "scheduled-tasks": true,
 };
 
@@ -140,5 +141,9 @@ function nameOfSegment(
   if (!segment) return t.common.home;
   if (segment === "workspace") return t.breadcrumb.workspace;
   if (segment === "chats") return t.breadcrumb.chats;
+  // EWCP surface — Vietnamese-first copy per the A6-11 naming decision
+  // (general workspace = "Công việc"; "Kiểm chứng" is reserved for the
+  // governed verification surfaces)
+  if (segment === "ewcp-runs") return "Công việc";
   return segment[0]?.toUpperCase() + segment.slice(1);
 }

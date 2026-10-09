@@ -22,7 +22,7 @@ import {
   type RunView,
   type RunStreamEvent,
 } from "@/ewcp/api";
-import { lifecycleStatus, statusLabel } from "@/ewcp/labels";
+import { lifecycleStatus, statusLabel, taskModeLabel } from "@/ewcp/labels";
 
 import { DecisionCard } from "./decision-card";
 import { LifecycleBadge } from "./lifecycle-badge";
@@ -174,12 +174,12 @@ export function ExecutionRunThread({
             <LifecycleBadge status={lifecycleStatus(run, workrun)} />
             {streaming && (
               <span className="text-muted-foreground ml-2 text-[10px] font-normal">
-                · live
+                · trực tiếp
               </span>
             )}
           </h2>
           <span className="text-muted-foreground text-[10px]">
-            {run.task_mode}
+            {taskModeLabel(run.task_mode)}
             {run.workrun_id && ` · wr:${run.workrun_id.slice(0, 8)}…`}
           </span>
         </div>

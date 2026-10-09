@@ -65,7 +65,7 @@ export function ShareVerifyLink({ manifestHash }: { manifestHash: string }) {
             : undefined
         }
       >
-        {state === "copied" ? "Đã copy link" : "Chia sẻ link xác minh"}
+        {state === "copied" ? "Đã copy link" : "Chia sẻ link kiểm chứng"}
       </Button>
       <p className="text-muted-foreground text-xs">
         Người nhận mở link này tra cứu bằng chứng niêm phong — không cần API

@@ -12,6 +12,8 @@ import {
   reconStatusLabel,
   STATUS_LABEL,
   statusLabel,
+  TASK_MODE_LABEL,
+  taskModeLabel,
   THREE_WAY_FLAG_LABEL,
   THREE_WAY_STATUS_LABEL,
   threeWayFlagLabel,
@@ -64,7 +66,19 @@ describe("ewcp labels — kernel enum → Vietnamese", () => {
     expect(outcomeLabel("invoice_recon")).toBe("Đối soát hóa đơn");
     expect(outcomeLabel("dossier_check")).toBe("Kiểm tra chứng từ");
     expect(outcomeLabel("three_way_match")).toBe("Đối chiếu 3 chiều");
-    expect(outcomeLabel("general")).toBe("Lane tổng quát");
+    expect(outcomeLabel("general")).toBe("Công việc tổng quát");
+  });
+
+  test("task modes map to the A6-11 naming vocabulary", () => {
+    // governed/invoke lanes are the verification surfaces → "kiểm chứng";
+    // the free-form workspace lane stays "tổng quát" under "Công việc"
+    for (const mode of ["general", "governed", "invoke"]) {
+      expect(TASK_MODE_LABEL[mode], `missing label for ${mode}`).toBeTruthy();
+    }
+    expect(taskModeLabel("general")).toBe("tổng quát");
+    expect(taskModeLabel("governed")).toBe("kiểm chứng");
+    expect(taskModeLabel("invoke")).toBe("kiểm chứng từ chat");
+    expect(taskModeLabel("future_mode")).toBe("future_mode");
   });
 
   test("every kernel ReconStatus has a Vietnamese chip label", () => {

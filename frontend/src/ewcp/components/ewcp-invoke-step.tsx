@@ -65,9 +65,11 @@ export function EwcpInvokeStep({
 }) {
   const outcomeType =
     typeof args.outcome_type === "string" ? args.outcome_type : undefined;
-  const label = `EWCP · ${
-    outcomeType ? (OUTCOME_LABEL[outcomeType] ?? outcomeType) : "invoke"
-  }`;
+  // governed lane → the reserved "Kiểm chứng" name (A6-11): an invoke
+  // produces a sealed, third-party-verifiable run
+  const label = outcomeType
+    ? `Kiểm chứng · ${OUTCOME_LABEL[outcomeType] ?? outcomeType}`
+    : "Kiểm chứng";
   return (
     <ChainOfThoughtStep label={label} icon={ShieldCheckIcon}>
       {resultMessage && <EwcpInvokeResultCard resultMessage={resultMessage} />}
@@ -115,7 +117,7 @@ function EwcpInvokeResultCard({
           {payload.capability_id ??
             (run.outcome_type
               ? (OUTCOME_LABEL[run.outcome_type] ?? run.outcome_type)
-              : "ewcp_invoke")}
+              : "Kiểm chứng")}
         </span>
         <LifecycleBadge status={lifecycle} />
       </div>

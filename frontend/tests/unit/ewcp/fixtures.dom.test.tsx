@@ -63,7 +63,7 @@ describe("A6 fixture contract (docs aid)", () => {
         run={VERIFIED_RUN_VIEW}
       />,
     );
-    await screen.findByText(/VERIFIED/);
+    await screen.findByText(/KIỂM CHỨNG/);
     expect(calls[0]!.url).toBe(
       `/api/ewcp/runs/${GOVERNED_EXECUTION_RUN.execution_run_id}/manifest`,
     );
@@ -71,7 +71,7 @@ describe("A6 fixture contract (docs aid)", () => {
       screen.getByText(`manifest_hash: ${SEALED_MANIFEST.manifest_hash}`),
     ).toBeTruthy();
     expect(
-      screen.getByRole("link", { name: /verify/i }).getAttribute("href"),
+      screen.getByRole("link", { name: /kiểm chứng/i }).getAttribute("href"),
     ).toBe(`/verify/${SEALED_MANIFEST.manifest_hash}`);
   });
 

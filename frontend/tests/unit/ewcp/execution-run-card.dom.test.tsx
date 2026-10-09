@@ -31,7 +31,7 @@ describe("ExecutionRunCard", () => {
     // the card renders the WP-A6 lifecycle vocabulary (a running run is
     // "accepted" — the work is taken on, nothing claimed yet)
     expect(screen.getByText("Đã tiếp nhận")).toBeTruthy();
-    expect(screen.getByText("governed")).toBeTruthy();
+    expect(screen.getByText("kiểm chứng")).toBeTruthy();
     expect(screen.getByText(/wr:wr-12345…/)).toBeTruthy();
   });
 

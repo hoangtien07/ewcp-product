@@ -38,9 +38,9 @@ export function CapabilityGallery({
     (s) => s.outcome_type === COMING_SOON.outcomeType,
   );
   return (
-    <section className="space-y-2" aria-label="Gói nghiệp vụ governed">
+    <section className="space-y-2" aria-label="Gói nghiệp vụ kiểm chứng">
       <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-        Gói nghiệp vụ governed
+        Gói nghiệp vụ kiểm chứng
       </h2>
       <div className="grid gap-3 sm:grid-cols-2">
         {specs.map((s) => {
@@ -55,7 +55,7 @@ export function CapabilityGallery({
                   {outcomeLabel(s.outcome_type)}
                 </h3>
                 <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                  Governed — niêm phong kiểm chứng
+                  Kiểm chứng — niêm phong
                 </span>
               </div>
               <p className="text-muted-foreground text-xs">{s.description}</p>
@@ -96,7 +96,7 @@ export function CapabilityGallery({
                   onClick={() => onGoverned(s)}
                   className="bg-emerald-600 text-white hover:bg-emerald-700"
                 >
-                  Chạy governed
+                  Chạy kiểm chứng
                 </Button>
               </div>
             </article>
