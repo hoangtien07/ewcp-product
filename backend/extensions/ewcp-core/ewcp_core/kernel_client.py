@@ -326,6 +326,30 @@ class KernelClient:
             raise _invoke_error(exc) from exc
         return resp.json()
 
+    async def list_workrun_statuses(
+        self,
+        workrun_ids: list[str],
+        *,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """GET /workruns?workrun_ids= — A6-07 batched `workrun_status`
+        list projection: one kernel round-trip for the caller's bound id
+        set. Rows are `{workrun_id, status, pending_decision,
+        last_event_at}`; `status` is the raw kernel TaskStatus value
+        (lifecycle vocabulary is our projection, `lifecycleStatus`).
+
+        Freshness is read-through: rows reflect kernel state at query
+        time. A map row whose workrun the kernel has never heard of is
+        simply absent from the response (stale reconcile is on-demand,
+        not list-time). `tenant_id` only matters under dev-mode kernel
+        auth (no tenant keys — kernel then requires the declared param);
+        keyed kernels derive it from the API key."""
+        params: dict[str, str] = {"workrun_ids": ",".join(workrun_ids)}
+        if tenant_id:
+            params["tenant_id"] = tenant_id
+        resp = await self._request("GET", "/workruns", allow_retry=True, params=params)
+        return resp.json()
+
     async def get_workrun(self, workrun_id: str) -> dict[str, Any]:
         """GET /workruns/{id} — governed truth: status, pending_questions,
         deliverables, attempts, spend."""

@@ -19,9 +19,11 @@ auth before any resume mutates a run. No background recovery exists
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
+import httpx
 from deerflow_extension_api import AgentBuildContext, AgentScope, ExtensionRuntimeDeps, HostPolicySnapshot, MiddlewarePlacement, Placement
 from deerflow_extension_api.agent_runs import AgentRunError, resolve_agent_runs
 from deerflow_extension_api.auth import resolve_principal
@@ -30,10 +32,12 @@ from fastapi import APIRouter, HTTPException, Request
 from .api_routes import build_api_router, request_scoped_client
 from .egress_policy import EgressPolicy
 from .execution_run_store import ExecutionRunStore
-from .kernel_client import KernelClient, KernelClientConfig
+from .kernel_client import KernelClient, KernelClientConfig, KernelNotConfigured
 from .model_policy import BudgetAdmissionMiddleware, KernelBudgetClient, ModelPolicyConfig, TransientRetryPolicy
 from .recovery import RecoveryDenied, ResumeNotPending, RunNotOwned, RunRecovery
 from .run_launcher import DEFAULT_RUN_RECURSION_LIMIT, HttpRunStarter, RunLauncher, RunStarter, ThreadUploads
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_recursion_limit(value: Any) -> int:
@@ -212,6 +216,40 @@ def _bound_runs_or_503(request: Request) -> Any:
     return runs
 
 
+async def _hydrate_workrun_status(service: EwcpCoreService, rows: list[dict[str, Any]]) -> None:
+    """A6-07 `workrun_status` list projection — join kernel truth onto
+    bound ExecutionRunMap rows via ONE batched `GET /workruns` (never a
+    per-row fetch — the point of the founder approval).
+
+    Read-through freshness: status/pending_decision reflect kernel state
+    at query time and `last_event_at` is the kernel-side bound the card
+    badges against. Rows whose workrun_id the kernel does not know (a
+    stale map row — e.g. an invoke projection raced the bind) simply get
+    no projection: the map row still renders, and reconciliation is the
+    on-demand `GET /runs/{id}` refresh path, not list time. A kernel
+    outage degrades the whole projection, never the list itself."""
+    client = service.client
+    if client is None:
+        return
+    bound = sorted({r["workrun_id"] for r in rows if r.get("workrun_id")})
+    if not bound:
+        return
+    try:
+        statuses = await client.list_workrun_statuses(bound, tenant_id=service.invoke_tenant_id)
+    except (KernelNotConfigured, httpx.HTTPError) as exc:
+        logger.warning("ewcp: workrun_status projection unavailable — %s", exc)
+        return
+    by_id = {s["workrun_id"]: s for s in statuses}
+    for row in rows:
+        ws = by_id.get(row.get("workrun_id"))
+        if ws is not None:
+            row["workrun_status"] = {
+                "status": ws["status"],
+                "pending_decision": ws["pending_decision"],
+                "last_event_at": ws["last_event_at"],
+            }
+
+
 def build_router(service: EwcpCoreService) -> APIRouter:
     router = APIRouter(prefix="/api/ewcp", tags=["ewcp"])
 
@@ -246,19 +284,18 @@ def build_router(service: EwcpCoreService) -> APIRouter:
             raise HTTPException(403, str(exc)) from exc
         except AgentRunError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
-        return {
-            "owner": report.created_by,
-            "runs": [
-                {
-                    **_record_view(item.record),
-                    "run_status": item.run_status,
-                    "pending_interrupt": item.pending_interrupt,
-                    "changed": item.changed,
-                    "observation_url": item.observation_url,
-                }
-                for item in report.runs
-            ],
-        }
+        rows = [
+            {
+                **_record_view(item.record),
+                "run_status": item.run_status,
+                "pending_interrupt": item.pending_interrupt,
+                "changed": item.changed,
+                "observation_url": item.observation_url,
+            }
+            for item in report.runs
+        ]
+        await _hydrate_workrun_status(service, rows)
+        return {"owner": report.created_by, "runs": rows}
 
     @router.post("/runs/{execution_run_id}/resume")
     async def resume_run(execution_run_id: str, request: Request) -> dict[str, Any]:

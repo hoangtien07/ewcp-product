@@ -48,6 +48,75 @@ describe("ExecutionRunCard", () => {
     expect(screen.queryByText("Agent hoàn tất")).toBeNull();
   });
 
+  test("kernel workrun_status drives the lifecycle badge (A6-07)", () => {
+    // the launcher may only say "running", but the kernel projection says
+    // the workrun is sealed — kernel truth wins over the launcher guess
+    render(
+      <ExecutionRunCard
+        run={{
+          ...run,
+          workrun_status: {
+            status: "verified",
+            pending_decision: false,
+            last_event_at: 1700000000,
+          },
+        }}
+        active={false}
+        onSelect={rs.fn()}
+      />,
+    );
+    expect(screen.getByText("Đã niêm phong")).toBeTruthy();
+    expect(screen.queryByText("Đã tiếp nhận")).toBeNull();
+  });
+
+  test("pending_decision renders the awaiting-decision chip", () => {
+    render(
+      <ExecutionRunCard
+        run={{
+          ...run,
+          workrun_status: {
+            status: "awaiting_input",
+            pending_decision: true,
+            last_event_at: 1700000000,
+          },
+        }}
+        active={false}
+        onSelect={rs.fn()}
+      />,
+    );
+    expect(screen.getByText("Chờ quyết định")).toBeTruthy();
+  });
+
+  test("no pending decision -> no chip", () => {
+    render(
+      <ExecutionRunCard
+        run={{
+          ...run,
+          workrun_status: {
+            status: "running",
+            pending_decision: false,
+            last_event_at: 1700000000,
+          },
+        }}
+        active={false}
+        onSelect={rs.fn()}
+      />,
+    );
+    expect(screen.queryByText("Chờ quyết định")).toBeNull();
+  });
+
+  test("unbound rows (no projection) keep the launcher-status badge", () => {
+    render(
+      <ExecutionRunCard
+        run={{ ...run, status: "completed" }}
+        active={false}
+        onSelect={rs.fn()}
+      />,
+    );
+    // no workrun_status -> lifecycleStatus falls back to the launcher enum
+    expect(screen.getByText("Agent hoàn tất")).toBeTruthy();
+  });
+
   test("click selects the run", () => {
     const onSelect = rs.fn();
     render(<ExecutionRunCard run={run} active={false} onSelect={onSelect} />);

@@ -24,6 +24,20 @@ export type ExecutionRunStatus =
   | "timeout"
   | "interrupted";
 
+/** A6-07 `workrun_status` list projection — the kernel's raw truth for
+ * one workrun, hydrated server-side onto bound `/api/ewcp/runs` rows by
+ * ONE batched `GET /workruns?workrun_ids=`. Read-through at query time:
+ * `status` is the kernel TaskStatus value (project via
+ * `lifecycleStatus`), `pending_decision` marks an open human gate, and
+ * `last_event_at` (epoch seconds) is the kernel-side freshness bound.
+ * Absent when the row is unbound or the kernel has no such workrun —
+ * stale map rows reconcile on the run detail path, not here. */
+export interface WorkrunStatusProjection {
+  status: string;
+  pending_decision: boolean;
+  last_event_at: number;
+}
+
 export interface ExecutionRun {
   execution_run_id: string;
   thread_id: string;
@@ -40,6 +54,8 @@ export interface ExecutionRun {
   updated_at: string;
   /** Gateway SSE join path — null until the run is admitted. */
   join_url: string | null;
+  /** A6-07 kernel projection — only on the owner-scoped list read. */
+  workrun_status?: WorkrunStatusProjection;
 }
 
 export interface EwcpIdentity {

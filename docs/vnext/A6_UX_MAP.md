@@ -203,3 +203,34 @@ verified as of that commit:
   Non-ewcp tools render untouched (rstest seam regression).
 - Still open: #7 [decision-needed], #11 [decision-needed], #12
   [decision-needed], #14 [blocked on A5b].
+
+## 4. A6-07 — `workrun_status` list projection (shipped)
+
+Founder-approved small projection on the kernel list surface
+(`enterprise-work-control-plane` `GET /workruns`): each row is
+`{workrun_id, status, pending_decision, last_event_at}` served by ONE
+batched SQL read — no per-row fetch anywhere on the list path.
+
+- **Product hydration** — `GET /api/ewcp/runs` (the owner-scoped
+  recovery read in `plugin.py`) joins map rows to kernel truth via a
+  single `KernelClient.list_workrun_statuses(bound_ids)` call
+  (`?workrun_ids=`); the row gains `workrun_status` only when the
+  kernel knows that `workrun_id`. `?thread_id=` stays a documented
+  map-store read (chat-page badge needs ids/task_mode only — no kernel
+  fan-out).
+- **Projection consumption** — `ExecutionRunCard` feeds
+  `workrun_status` into `lifecycleStatus(run, workrun)` so kernel truth
+  wins over the launcher guess, and renders a "Chờ quyết định" chip
+  when `pending_decision` is true (freshness shown via `last_event_at`
+  tooltip).
+- **Freshness/reconciliation semantics** — read-through: status and
+  pending_decision reflect kernel state at query time; there is no
+  list-time caching, so the staleness bound is the request itself
+  (`last_event_at` = kernel-side bound: max of the workrun row write
+  and decision activity). A stale map row (workrun exists kernel-side
+  but the map row lacks `workrun_id` — e.g. an invoke projection raced
+  the bind) is NOT reconciled at list time: the kernel's
+  `?workrun_ids=` lookup only covers bound ids, and repair happens
+  on-demand on the `GET /api/ewcp/runs/{id}` refresh path. A kernel
+  outage degrades the whole projection to absent — the list still
+  renders off launcher state.
