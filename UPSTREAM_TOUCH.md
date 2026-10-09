@@ -21,10 +21,18 @@ recorded below. Budget: **≤ 8 files**.
 | 6 | `backend/app/gateway/routers/ewcp_verify.py` | NEW — thin router for `GET/POST /api/ewcp/verify{,/{hash}}` delegating to `ewcp_core.verify_surface` (404 when the extension is absent) | Host-mounted public surface; kernel logic stays boxed in the extension | 2026-10-08 |
 | 7 | `backend/tests/test_extension_gateway_wiring.py` | `/api/ewcp/verify` (+ `/`, `//` variants) added to the CSRF-exemption parametrize | Pins the actual `should_check_csrf` behavior for the new exempt path, not just set equality | 2026-10-08 |
 | 8 | `frontend/AGENTS.md` | Route inventory mentions `/workspace/ewcp-runs` + `/verify/[hash]` | Repo convention: keep the module guide in sync with the change set | 2026-10-08 |
+| 9 | `frontend/src/components/workspace/chats/chat-page.tsx` | `ThreadExecutionRunBadge` chips in the chat header linking to `/workspace/ewcp-runs/{id}` (from `GET /api/ewcp/runs?thread_id=`) | A6 #3 reverse cross-link: chat header is the only place a per-thread run badge can live; shipped in #40, logged late | 2026-10-09 |
+| 10 | `frontend/src/components/workspace/messages/message-group.tsx` | `case "ewcp_invoke"` in `getToolCallKind` + one `kind === "ewcp_invoke"` branch + the `@/ewcp` import (~10 lines) | A6 #13 hybrid lane: `getToolCallKind` is the designed name-keyed dispatch for per-tool renderers; the card itself is boxed in `frontend/src/ewcp/components/ewcp-invoke-step.tsx` | 2026-10-09 |
 
-Current count: **8 / 8** — budget exhausted; any further upstream need
-requires restructuring (e.g. an upstream "extension-declared public
-route" contract contribution) rather than another touch.
+Current count: **10 / 8** — OVER BUDGET. Two rows (#9 chat-page.tsx;
+the `src/app/workspace/ewcp-runs/` + `src/app/verify/` route files were
+also added in upstream dirs without rows) were shipped by #40/#42
+without ledger entries — recorded here retroactively. The `getToolCallKind`
+dispatch is the intended extension seam for per-tool cards (thin, additive,
+name-keyed), so #10 was judged a legitimate touch rather than core surgery;
+flag for founder review — if the seam is contested, the alternative is an
+upstream "tool-renderer registry" contribution so extensions can register
+cards without patching message-group.
 
 ## Merge-sync policy
 

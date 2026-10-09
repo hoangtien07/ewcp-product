@@ -579,6 +579,230 @@ async def test_invoke_transport_failure_is_retryable() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ewcp_invoke → ExecutionRunMap binding (A6 #13 hybrid lane)
+# ---------------------------------------------------------------------------
+
+
+class _MapStore:
+    """Fake ExecutionRunStore: list/get over a record list, records writes."""
+
+    def __init__(self, records: list[Any] | None = None, *, fail: bool = False) -> None:
+        self.records = list(records or [])
+        self.inserts: list[Any] = []
+        self.binds: list[tuple[str, str]] = []
+        self.fail = fail
+
+    async def list_for_thread(self, thread_id: str, *, limit: int = 50) -> list[Any]:
+        return [r for r in self.records if getattr(r, "thread_id", None) == thread_id]
+
+    async def get_by_idempotency_key(self, created_by: str, key: str) -> Any:
+        return next(
+            (r for r in self.records if getattr(r, "created_by", None) == created_by and getattr(r, "idempotency_key", None) == key),
+            None,
+        )
+
+    async def insert(self, record: Any) -> Any:
+        if self.fail:
+            raise RuntimeError("store down")
+        self.records.append(record)
+        self.inserts.append(record)
+        return record
+
+    async def bind_workrun(self, execution_run_id: str, workrun_id: str) -> None:
+        self.binds.append((execution_run_id, workrun_id))
+
+
+_RUN_VIEW_WR = {**_RUN_VIEW, "workrun_id": "wr-inv-1"}
+
+
+@pytest.mark.asyncio
+async def test_invoke_success_projects_map_row_bound_to_workrun() -> None:
+    """Hybrid lane: the tool result must name the ExecutionRunMap row that
+    binds the kernel workrun to this thread — the chat card deep-links
+    /workspace/ewcp-runs/{execution_run_map_id}."""
+    rec = _descriptor_then_run(_RUN_VIEW_WR)
+    store = _MapStore()
+    deps = _deps(_client(rec), store=store)
+
+    out = json.loads(await invoke_tools.invoke_impl(deps, CTX, outcome_type="invoice_recon", context={"period": "p"}))
+
+    assert out["ok"] is True
+    assert len(store.inserts) == 1
+    row = store.inserts[0]
+    assert out["execution_run_map_id"] == row.execution_run_id
+    assert row.thread_id == "t-1"
+    assert row.run_id == "r-1"
+    assert row.workrun_id == "wr-inv-1"
+    assert row.task_mode == "invoke"
+    assert row.created_by == "u-1"
+    assert row.idempotency_key == out["idempotency_key"]
+
+
+@pytest.mark.asyncio
+async def test_invoke_replayed_key_reuses_map_row() -> None:
+    """A second invoke under the same idempotency key converges on the
+    existing row — no duplicate ExecutionRunMap entries."""
+    existing = SimpleNamespace(
+        execution_run_id="er_existing",
+        thread_id="t-1",
+        run_id="r-1",
+        workrun_id="wr-inv-1",
+        task_mode="invoke",
+        created_by="u-1",
+        idempotency_key="agent-key-9",
+    )
+    rec = _descriptor_then_run(_RUN_VIEW_WR)
+    store = _MapStore([existing])
+    deps = _deps(_client(rec), store=store)
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            CTX,
+            outcome_type="invoice_recon",
+            context={"period": "p"},
+            idempotency_key="agent-key-9",
+        )
+    )
+
+    assert out["ok"] is True
+    assert out["execution_run_map_id"] == "er_existing"
+    assert store.inserts == []
+    assert store.binds == []  # workrun already bound — no rewrite
+
+
+@pytest.mark.asyncio
+async def test_invoke_unbound_existing_row_gets_workrun_bound() -> None:
+    existing = SimpleNamespace(
+        execution_run_id="er_existing",
+        thread_id="t-1",
+        run_id="r-1",
+        workrun_id=None,
+        task_mode="invoke",
+        created_by="u-1",
+        idempotency_key="agent-key-10",
+    )
+    rec = _descriptor_then_run(_RUN_VIEW_WR)
+    store = _MapStore([existing])
+    deps = _deps(_client(rec), store=store)
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            CTX,
+            outcome_type="invoice_recon",
+            context={"period": "p"},
+            idempotency_key="agent-key-10",
+        )
+    )
+
+    assert out["execution_run_map_id"] == "er_existing"
+    assert store.inserts == []
+    assert store.binds == [("er_existing", "wr-inv-1")]
+
+
+@pytest.mark.asyncio
+async def test_invoke_map_identity_never_selects_invoke_rows() -> None:
+    """Identity regression: an invoke row on the thread is an invocation
+    record, not the calling run's own ExecutionRun — a later invoke in the
+    same run must keep keying the raw run_id, not join the earlier
+    invocation's er_ account."""
+    invoke_row = SimpleNamespace(
+        execution_run_id="er_prev_invoke",
+        thread_id="t-1",
+        run_id="r-1",
+        workrun_id="wr-inv-0",
+        task_mode="invoke",
+        created_by="u-1",
+        idempotency_key="k0",
+    )
+    rec = _descriptor_then_run(_RUN_VIEW_WR)
+    store = _MapStore([invoke_row])
+    deps = _deps(_client(rec), store=store)
+
+    out = json.loads(await invoke_tools.invoke_impl(deps, CTX, outcome_type="invoice_recon", context={"period": "p"}))
+
+    assert out["ok"] is True
+    body = _form_text(rec.requests[1])
+    assert 'name="execution_run_id"' in body and "r-1" in body
+    assert "er_prev_invoke" not in body
+
+
+@pytest.mark.asyncio
+async def test_invoke_map_row_for_launcher_thread_still_joins_er_identity() -> None:
+    """A pane-launched (non-invoke) row still wins the identity lookup —
+    invoke rows are skipped, the launcher's er_ is sent to the kernel."""
+    launcher_row = SimpleNamespace(
+        execution_run_id="er_launch",
+        thread_id="t-1",
+        run_id="r-1",
+        workrun_id=None,
+        task_mode="general",
+        created_by="u-1",
+        idempotency_key="kl",
+    )
+    invoke_row = SimpleNamespace(
+        execution_run_id="er_prev_invoke",
+        thread_id="t-1",
+        run_id="r-1",
+        workrun_id="wr-0",
+        task_mode="invoke",
+        created_by="u-1",
+        idempotency_key="k0",
+    )
+    rec = _descriptor_then_run(_RUN_VIEW_WR)
+    store = _MapStore([invoke_row, launcher_row])
+    deps = _deps(_client(rec), store=store)
+
+    out = json.loads(await invoke_tools.invoke_impl(deps, CTX, outcome_type="invoice_recon", context={"period": "p"}))
+
+    assert out["ok"] is True
+    body = _form_text(rec.requests[1])
+    assert "er_launch" in body
+    assert "er_prev_invoke" not in body
+
+
+@pytest.mark.asyncio
+async def test_invoke_store_failure_does_not_downgrade_result() -> None:
+    """The invoke succeeded kernel-side — a projection failure yields a
+    result without the map link, never a tool error."""
+    rec = _descriptor_then_run(_RUN_VIEW_WR)
+    store = _MapStore(fail=True)
+    deps = _deps(_client(rec), store=store)
+
+    out = json.loads(await invoke_tools.invoke_impl(deps, CTX, outcome_type="invoice_recon", context={"period": "p"}))
+
+    assert out["ok"] is True
+    assert out["execution_run_map_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_invoke_without_store_has_no_map_link() -> None:
+    rec = _descriptor_then_run(_RUN_VIEW_WR)
+    deps = _deps(_client(rec))
+
+    out = json.loads(await invoke_tools.invoke_impl(deps, CTX, outcome_type="invoice_recon", context={"period": "p"}))
+
+    assert out["ok"] is True
+    assert out["execution_run_map_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_invoke_run_without_workrun_id_creates_no_row() -> None:
+    """Non-invoke kernel intakes echo no workrun — nothing to bind."""
+    run_view = {k: v for k, v in _RUN_VIEW_WR.items() if k != "workrun_id"}
+    rec = _descriptor_then_run(run_view)
+    store = _MapStore()
+    deps = _deps(_client(rec), store=store)
+
+    out = json.loads(await invoke_tools.invoke_impl(deps, CTX, outcome_type="invoice_recon", context={"period": "p"}))
+
+    assert out["ok"] is True
+    assert out["execution_run_map_id"] is None
+    assert store.inserts == []
+
+
+# ---------------------------------------------------------------------------
 # middleware contribution
 # ---------------------------------------------------------------------------
 

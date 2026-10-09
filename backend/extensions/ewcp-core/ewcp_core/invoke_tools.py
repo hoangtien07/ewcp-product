@@ -30,12 +30,21 @@ from deerflow.tools.types import Runtime
 from deerflow_extension_api.placement import AgentScope, MiddlewarePlacement, Placement
 from langchain.agents.middleware import AgentMiddleware
 from langchain.tools import tool
+from sqlalchemy.exc import IntegrityError
 
+from .execution_run_store import ExecutionRunRecord
 from .kernel_client import InvokeResult, KernelClient, KernelInvokeError
+from .run_launcher import ExecutionRunStatus
 
 logger = logging.getLogger(__name__)
 
 _MAX_FILE_BYTES = 100 * 1024 * 1024
+
+#: task_mode value on ExecutionRunMap rows minted by ewcp_invoke (not a
+#: launcher TaskMode — the pane cannot launch one). Marks the row as an
+#: invocation record: `_execution_run_id` never selects it as the run's own
+#: identity row, and the pane can tell chat-invoked work apart.
+INVOKE_TASK_MODE = "invoke"
 # Directories (under the thread's user-data root) that `files:` names may
 # resolve against. Bare names default to uploads/.
 _FILE_DIRS = ("uploads", "workspace", "outputs")
@@ -136,12 +145,76 @@ async def _execution_run_id(deps: InvokeDeps, ctx: Mapping[str, Any]) -> str | N
         except Exception:  # noqa: BLE001 — store failure must not block the invoke
             logger.warning("execution-run store lookup failed for thread %s", thread_id, exc_info=True)
         else:
-            for record in records:
+            # Invocation records (task_mode=invoke) belong to a capability
+            # call, not to the calling run — picking one here would join a
+            # later invoke's budget onto an earlier invocation's account.
+            candidates = [r for r in records if getattr(r, "task_mode", None) != INVOKE_TASK_MODE]
+            for record in candidates:
                 if run_id and record.run_id == run_id:
                     return record.execution_run_id
-            if records:
-                return records[0].execution_run_id
+            if candidates:
+                return candidates[0].execution_run_id
     return str(run_id) if run_id else None
+
+
+async def _bind_invocation_record(
+    deps: InvokeDeps,
+    ctx: Mapping[str, Any],
+    *,
+    outcome_type: str,
+    idempotency_key: str,
+    run: Mapping[str, Any],
+) -> str | None:
+    """Project a successful invoke into the ExecutionRunMap (A6 #13):
+    the hybrid lane's deep link `/workspace/ewcp-runs/{id}` resolves only
+    when a map row binds the kernel workrun to this thread/run. Returns
+    the row's execution_run_id — None when the store, thread, or workrun
+    is absent (the invoke already succeeded kernel-side; a projection
+    failure must not downgrade the tool result)."""
+    workrun_id = run.get("workrun_id")
+    store = deps.store_getter()
+    thread_id = ctx.get("thread_id")
+    if store is None or not thread_id or not workrun_id:
+        return None
+    created_by = str(ctx.get("user_id") or get_effective_user_id())
+    try:
+        existing = await store.get_by_idempotency_key(created_by, idempotency_key)
+        if existing is not None:
+            if not existing.workrun_id:
+                await store.bind_workrun(existing.execution_run_id, str(workrun_id))
+            elif existing.workrun_id != str(workrun_id):
+                logger.warning(
+                    "invoke map row %s already bound to %s, kernel returned %s — keeping the first binding",
+                    existing.execution_run_id,
+                    existing.workrun_id,
+                    workrun_id,
+                )
+            return existing.execution_run_id
+        run_id = ctx.get("run_id")
+        record = await store.insert(
+            ExecutionRunRecord.new(
+                thread_id=str(thread_id),
+                run_id=str(run_id) if run_id else None,
+                workrun_id=str(workrun_id),
+                task_mode=INVOKE_TASK_MODE,
+                status=ExecutionRunStatus.RUNNING.value,
+                intent=f"ewcp_invoke:{outcome_type}",
+                idempotency_key=idempotency_key,
+                created_by=created_by,
+            )
+        )
+        return record.execution_run_id
+    except IntegrityError:
+        # A concurrent invoke replayed the same idempotency key and won
+        # the insert — converge on its row instead of duplicating it.
+        try:
+            raced = await store.get_by_idempotency_key(created_by, idempotency_key)
+        except Exception:  # noqa: BLE001
+            return None
+        return raced.execution_run_id if raced is not None else None
+    except Exception:  # noqa: BLE001
+        logger.warning("invoke ExecutionRunMap projection failed for thread %s", thread_id, exc_info=True)
+        return None
 
 
 def _resolve_upload_path(root: Path, name: str) -> Path | None:
@@ -288,12 +361,20 @@ async def invoke_impl(
         return _fail("kernel_unreachable", str(exc), "retry")
 
     run = result.run
+    map_id = await _bind_invocation_record(
+        deps,
+        ctx,
+        outcome_type=outcome_type,
+        idempotency_key=key,
+        run=run,
+    )
     return _result(
         {
             "ok": True,
             "capability_id": descriptor.get("capability_id") or f"pack:{outcome_type}",
             "invocation_id": run.get("invocation_id") or invocation_id,
             "execution_run_id": run.get("execution_run_id") or execution_run_id,
+            "execution_run_map_id": map_id,
             "idempotency_key": key,
             "idempotent_replay": result.idempotent_replay,
             "run": run,
