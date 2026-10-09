@@ -197,7 +197,13 @@ back to `user_id` when none is configured. Client-supplied
 `ewcp_tenant_id`, `ewcp_egress_mode`, and `kernel` context keys are
 dropped at every hook — `body.config['context']` reaches the runtime
 verbatim, so trusting them would let any run claim a non_sensitive
-tenant, a looser mode, or a forged governed identity. Unknown tenants
+tenant, a looser mode, or a forged governed identity. The legitimate
+`kernel.workrun_id` is then re-stamped from server-owned state — the
+ExecutionRunMap binding the governed launch path (api_routes →
+RunLauncher admission) wrote for this thread/run — so governed budget
+attribution survives while forged identities die with the strip.
+Invocation rows (`task_mode=invoke`) never stamp, matching
+`invoke_tools._execution_run_id`'s exclusion. Unknown tenants
 are `sensitive` under `default_mode` (fail-closed). `non_sensitive`
 tenants — built-in `demo`/`default` plus `tenant_classes` — run
 unmodified, matching kernel `DataEgressPolicy` semantics.

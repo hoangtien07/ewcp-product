@@ -74,6 +74,9 @@ class EwcpCoreService:
             EgressPolicy.resolve_config(self.config),
             kernel_url=self._resolved.kernel_url,
             tenant_id_getter=lambda: self.ewcp_tenant_id,
+            # Late-bound like tenant_id_getter: `self._store` only exists after
+            # `start()` binds the session factory — the getter defers the read.
+            store_getter=lambda: self._store,
         )
         self._model_policy = ModelPolicyConfig.resolve(self.config)
         self._transient_retry = TransientRetryPolicy.resolve(self.config)

@@ -29,6 +29,7 @@ tenants run unmodified (kernel ``DataEgressPolicy`` parity, including the
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
@@ -39,6 +40,10 @@ from deerflow_extension_api.placement import AgentScope, MiddlewarePlacement, Pl
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.errors import GraphBubbleUp
+
+from .invoke_tools import INVOKE_TASK_MODE
+
+logger = logging.getLogger(__name__)
 
 # --- channels / modes --------------------------------------------------------
 
@@ -62,13 +67,16 @@ _BUILTIN_NON_SENSITIVE_TENANTS = frozenset({"demo", "default"})
 _CTX_TENANT_ID = "ewcp_tenant_id"
 _CTX_EGRESS_MODE = "ewcp_egress_mode"
 _CTX_KERNEL = "kernel"
+_CTX_KERNEL_WORKRUN = "workrun_id"
 
 # Server-owned runtime.context keys a client must never supply. The run body
 # whitelists these out of ``body.context``, but ``body.config['context']``
 # reaches the runtime verbatim — a forged ``ewcp_egress_mode=approved_cloud``
 # or ``ewcp_tenant_id=demo`` would otherwise bypass every channel gate, and a
 # forged ``kernel.workrun_id`` would steal a governed identity for budget
-# accounting. ``prepare_context`` neutralizes them on every entry point.
+# accounting. ``prepare_context`` neutralizes them on every entry point, then
+# re-stamps the server-owned values (tenant from deployment config, workrun
+# from the ExecutionRunMap launch binding).
 _FORGED_CONTEXT_KEYS = (_CTX_EGRESS_MODE, _CTX_KERNEL)
 
 _DENY_KEY = "ewcp_egress_deny"
@@ -362,6 +370,38 @@ def _deny_marker(message: Any) -> dict[str, Any] | None:
     return None
 
 
+async def _governed_workrun_id(store: Any, context: Mapping[str, Any]) -> str | None:
+    """Resolve this run's governed workrun identity from authenticated server
+    state — the ExecutionRunMap row the launch path (api_routes → RunLauncher
+    admission) bound to this thread/run. Client bytes never write that table,
+    so a workrun_id resolved here cannot be forged. ``thread_id``/``run_id``
+    in runtime.context are server-stamped (caller context cannot override
+    them), which is what makes the lookup trustworthy. Mirrors the precedence
+    in ``invoke_tools._execution_run_id``: the row matching this run_id
+    first, then the thread's latest governed binding — a governed thread's
+    later runs (new run_ids) stay under the same workrun. Invocation rows
+    (``task_mode=invoke``) belong to a capability call's account, never to
+    the calling run's identity."""
+    if store is None:
+        return None
+    thread_id = context.get("thread_id")
+    if not thread_id:
+        return None
+    try:
+        records = await store.list_for_thread(str(thread_id))
+    except Exception:  # noqa: BLE001 — identity lookup must not break the egress gate
+        logger.warning("ewcp egress: governed identity lookup failed for thread %s", thread_id, exc_info=True)
+        return None
+    candidates = [r for r in records if getattr(r, "task_mode", None) != INVOKE_TASK_MODE and r.workrun_id]
+    run_id = context.get("run_id")
+    for record in candidates:
+        if run_id and record.run_id == str(run_id):
+            return str(record.workrun_id)
+    if candidates:
+        return str(candidates[0].workrun_id)
+    return None
+
+
 class EgressPolicy:
     """Resolves and enforces per-tenant/run egress modes on every channel."""
 
@@ -371,21 +411,28 @@ class EgressPolicy:
         *,
         kernel_url: str | None = None,
         tenant_id_getter: Callable[[], str | None] | None = None,
+        store_getter: Callable[[], Any] | None = None,
     ) -> None:
         self.config = config
         self._kernel_url = kernel_url
         self._tenant_id_getter = tenant_id_getter
+        self._store_getter = store_getter
 
-    def prepare_context(self, context: Mapping[str, Any] | None) -> MutableMapping[str, Any]:
+    async def prepare_context(self, context: Mapping[str, Any] | None) -> MutableMapping[str, Any]:
         """Apply server-authoritative EWCP keys to a run's runtime context.
 
-        Stamps ``ewcp_tenant_id`` with the configured deployment tenant so the
-        real tenant class drives classification (``resolve`` otherwise falls
-        back to ``user_id`` — an unclassified, sensitive identity). Drops the
-        ``_FORGED_CONTEXT_KEYS`` (``ewcp_egress_mode``, ``kernel``) — nothing
-        client-supplied may carry them, and no server producer reaches
-        runtime.context today. When no tenant is configured the key is
-        removed rather than trusted, so resolution fails closed.
+        Server-owned fields are written here AFTER the client-carried copies
+        are dropped — ``body.config['context']`` reaches runtime.context
+        verbatim, so ``_FORGED_CONTEXT_KEYS`` (``ewcp_egress_mode``,
+        ``kernel``) only ever arrive forged. The re-stamps come from
+        authenticated server state, never request bytes: ``ewcp_tenant_id``
+        from the deployment tenant getter (``resolve`` otherwise falls back
+        to ``user_id`` — an unclassified, sensitive identity; unconfigured →
+        the key is removed so resolution fails closed), and
+        ``kernel.workrun_id`` from the ExecutionRunMap binding the governed
+        launch path wrote — preserving the governed identity api_routes
+        injects at launch so ``model_policy._identity`` attributes budget
+        correctly, while a forged workrun dies with the strip.
 
         Mutates a dict context in place (the live runtime view tools read);
         immutable mappings get a stamped copy for the checks only.
@@ -399,6 +446,10 @@ class EgressPolicy:
             context[_CTX_TENANT_ID] = tenant
         else:
             context.pop(_CTX_TENANT_ID, None)
+        if self._store_getter is not None:
+            workrun_id = await _governed_workrun_id(self._store_getter(), context)
+            if workrun_id:
+                context[_CTX_KERNEL] = {_CTX_KERNEL_WORKRUN: workrun_id}
         return context
 
     @classmethod
@@ -683,15 +734,16 @@ class EgressPolicyMiddleware(AgentMiddleware):
         self.policy = policy
 
     async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        # Stamps the deployment tenant into runtime.context (in place, so
-        # tools and later wraps classify on the same identity) and drops
-        # forged server-owned keys before the admission gate reads them.
-        context = self.policy.prepare_context(getattr(runtime, "context", None) or {})
+        # Drops forged server-owned keys, then stamps the deployment tenant
+        # and the governed workrun binding into runtime.context (in place, so
+        # tools and later wraps classify on the same identity) before the
+        # admission gate reads them.
+        context = await self.policy.prepare_context(getattr(runtime, "context", None) or {})
         self.policy.enforce_run(context)
         return None
 
     async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-        context = self.policy.prepare_context(getattr(getattr(request, "runtime", None), "context", None) or {})
+        context = await self.policy.prepare_context(getattr(getattr(request, "runtime", None), "context", None) or {})
         decision = self.policy.check_model_call(getattr(request, "model", None), context)
         if not decision.allowed:
             return _denial_message(decision)
@@ -706,7 +758,7 @@ class EgressToolMiddleware(AgentMiddleware):
         self.policy = policy
 
     async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
-        context = self.policy.prepare_context(getattr(getattr(request, "runtime", None), "context", None) or {})
+        context = await self.policy.prepare_context(getattr(getattr(request, "runtime", None), "context", None) or {})
         tool_call = getattr(request, "tool_call", None) or {}
         decision = self.policy.check_tool_call(tool_call.get("name"), tool_call.get("args") or {}, context)
         if not decision.allowed:
