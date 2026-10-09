@@ -13,6 +13,7 @@ HTTP service reached M2M — never in-process.
 | `/workspace/ewcp-runs` | session | ExecutionRun workspace view: intent intake, capability gallery (`GET /api/ewcp/outcomes`), governed per-slot intake (`task_mode=governed` → kernel `POST /tasks` or `/outcomes/{type}/run`), owner-scoped run list, SSE thread view via the run's `join_url`, `pending_interrupt` resume box. Sidebar entry "EWCP". Deep link: `/workspace/ewcp-runs/{execution_run_id}` preselects the run. |
 | chat header | session | Each ExecutionRun riding a thread shows an `EWCP · {task_mode}` chip (from `GET /runs?thread_id=`) linking back to `/workspace/ewcp-runs/{id}`; the run detail links `thread_id` to `/workspace/chats/{id}`. |
 | `/verify/[hash]` | **public** | Seal permalink. Any link holder resolves the sealed manifest (PASS/FAIL/unprovable) and can run verify-by-them byte-integrity upload — no account required, the manifest hash is the capability. |
+| `/verify` | **public** | Same VerifyView without a seeded hash — stable entry for the verify-by-them lane (hash-lookup form doubles as the permalink entry). |
 
 ## Extension API (`/api/ewcp/*`)
 
@@ -52,9 +53,10 @@ also mounted by the `[execution_run_id]` deep-link route),
 `capability-gallery`, `governed-intake` (per-slot file form, one-zip
 guard mirroring the kernel `_collect_uploads` limit), `decision-card`
 (identity-gated), `manifest-card`, `studio-card`, `verify-view`,
-`share-verify-link`, `unverified-badge`; `api.ts` (session client +
-`joinRunStream` SSE parser), `registry.ts` (spec fallbacks), `labels.ts`,
-`exploratory.ts`.
+`share-verify-link`, `verified-seal-badge`, `lifecycle-badge` (the one
+status pill — WP-A6 vocabulary); `api.ts` (session client +
+`joinRunStream` SSE parser), `registry.ts` (spec fallbacks), `labels.ts`
+(status vocabulary + `lifecycleStatus` projection).
 
 ## Dropped with the pane (`ewcp/main` era)
 

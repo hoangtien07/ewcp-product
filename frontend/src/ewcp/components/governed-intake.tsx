@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import type { OutcomeSpecView } from "@/ewcp/api";
 import { outcomeLabel } from "@/ewcp/labels";
 import { isZipInput } from "@/ewcp/registry";
@@ -44,20 +45,22 @@ export function GovernedIntake({
           <h3 className="text-sm font-semibold">
             {outcomeLabel(spec.outcome_type)}
           </h3>
-          <p className="text-xs text-zinc-500">{spec.description}</p>
+          <p className="text-muted-foreground text-xs">{spec.description}</p>
         </div>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={onCancel}
           disabled={busy}
-          className="shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="h-7 shrink-0 text-[11px]"
         >
           Huỷ
-        </button>
+        </Button>
       </div>
       {spec.requires_inputs.map((input) => (
         <div key={input.name} className="space-y-1">
-          <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+          <label className="block text-xs font-medium">
             {input.label_vn}
             {input.required ? "" : " (tuỳ chọn)"}
           </label>
@@ -71,17 +74,17 @@ export function GovernedIntake({
                 [input.name]: Array.from(e.target.files ?? []),
               }))
             }
-            className="block w-full text-xs text-zinc-600 file:mr-2 file:rounded file:border file:border-zinc-300 file:bg-white file:px-2 file:py-1 file:text-xs dark:text-zinc-300 dark:file:border-zinc-600 dark:file:bg-zinc-800"
+            className="text-muted-foreground file:border-border file:bg-background block w-full text-xs file:mr-2 file:rounded file:border file:px-2 file:py-1 file:text-xs"
           />
           {(slots[input.name]?.length ?? 0) > 0 && (
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-muted-foreground text-[11px]">
               {slots[input.name]!.map((f) => f.name).join(", ")}
             </p>
           )}
         </div>
       ))}
       {zipSlots.length > 1 && (
-        <p className="text-xs text-red-600">
+        <p className="text-destructive text-xs">
           Kernel chỉ nhận một trường zip mỗi lần chạy — bỏ bớt một trong{" "}
           {zipSlots.map((i) => i.name).join(", ")}.
         </p>
@@ -92,14 +95,14 @@ export function GovernedIntake({
           {missing.map((i) => i.label_vn).join(", ")}.
         </p>
       )}
-      <button
+      <Button
         type="button"
         disabled={!canSubmit}
         onClick={() => onLaunch(slots)}
-        className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        className="bg-emerald-600 text-white hover:bg-emerald-700"
       >
         {busy ? "Đang chạy…" : "Chạy governed"}
-      </button>
+      </Button>
     </section>
   );
 }

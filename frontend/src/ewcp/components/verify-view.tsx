@@ -11,6 +11,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   getEvidence,
   verifyArtifacts,
@@ -101,32 +103,32 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
+      <div className="border-border bg-card rounded-lg border p-4">
         <h2 className="text-sm font-semibold">
           Tra cứu bằng chứng niêm phong — link công khai
         </h2>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="text-muted-foreground mt-1 text-xs">
           Ai có link đều tra cứu được. Link chứng minh manifest đã niêm phong
           tồn tại và seal còn nguyên; kiểm chứng từng byte của file cần evidence
           export + artifacts (form bên dưới).
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
+          <Input
             value={manifestHash}
             onChange={(e) => setManifestHash(e.target.value)}
             placeholder="manifest_hash (64 ký tự hex)"
-            className="min-w-56 flex-1 rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 font-mono text-xs dark:border-zinc-600"
+            className="min-w-56 flex-1 font-mono text-xs"
           />
-          <button
+          <Button
+            size="sm"
             onClick={() => lookupManifest(manifestHash)}
             disabled={permalinkBusy || !manifestHash.trim()}
-            className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {permalinkBusy ? "Đang tra cứu…" : "Tra cứu"}
-          </button>
+          </Button>
         </div>
         {permalinkErr && (
-          <p className="mt-2 text-xs text-red-600">{permalinkErr}</p>
+          <p className="text-destructive mt-2 text-xs">{permalinkErr}</p>
         )}
       </div>
 
@@ -168,13 +170,13 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
           )}
           <dl className="mt-3 space-y-1 text-xs">
             <div className="flex gap-2">
-              <dt className="text-zinc-500">manifest_hash</dt>
+              <dt className="text-muted-foreground">manifest_hash</dt>
               <dd className="font-mono break-all">
                 {permalink.manifest.manifest_hash ?? "…"}
               </dd>
             </div>
             <div className="flex gap-2">
-              <dt className="text-zinc-500">workrun_id</dt>
+              <dt className="text-muted-foreground">workrun_id</dt>
               <dd className="font-mono">{permalink.workrun_id}</dd>
             </div>
           </dl>
@@ -184,7 +186,9 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
                 <li key={i} className="flex gap-2">
                   <span
                     className={
-                      c.result === "PASS" ? "text-emerald-600" : "text-red-600"
+                      c.result === "PASS"
+                        ? "text-emerald-600"
+                        : "text-destructive"
                     }
                   >
                     {c.result ?? "?"}
@@ -192,7 +196,10 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
                   <span className="flex-1">
                     <span className="font-mono">{c.name}</span>
                     {c.detail && (
-                      <span className="text-zinc-500"> — {c.detail}</span>
+                      <span className="text-muted-foreground">
+                        {" "}
+                        — {c.detail}
+                      </span>
                     )}
                   </span>
                 </li>
@@ -201,7 +208,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
           )}
           {(permalink.manifest.deliverables?.length ?? 0) > 0 && (
             <div className="mt-3">
-              <div className="text-xs font-semibold text-zinc-500">
+              <div className="text-muted-foreground text-xs font-semibold">
                 Artifacts đã niêm phong
               </div>
               <ul className="mt-1 space-y-1 text-xs">
@@ -211,7 +218,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
                       {d.name ?? d.deliverable_id}
                     </span>
                     {d.sha256 && (
-                      <span className="font-mono break-all text-zinc-400">
+                      <span className="text-muted-foreground font-mono break-all">
                         sha256:{d.sha256.slice(0, 16)}…
                       </span>
                     )}
@@ -223,36 +230,35 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
         </div>
       )}
 
-      <div className="rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
+      <div className="border-border bg-card rounded-lg border p-4">
         <h2 className="text-sm font-semibold">
           Xác minh độc lập — verify-by-them
         </h2>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="text-muted-foreground mt-1 text-xs">
           Upload evidence export của run cùng các artifact. Hệ thống đo lại
           sha256 từng file + recompute manifest_hash — sửa 1 byte cũng FAIL.
           Evidence export lấy từ trang run của chủ sở hữu (owner-scoped).
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
+          <Input
             value={runId}
             onChange={(e) => setRunId(e.target.value)}
             placeholder="execution_run_id (chủ run)"
-            className="min-w-56 flex-1 rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 font-mono text-xs dark:border-zinc-600"
+            className="min-w-56 flex-1 font-mono text-xs"
           />
-          <button
+          <Button
+            size="sm"
+            variant="secondary"
             onClick={downloadEvidence}
             disabled={!runId.trim()}
-            className="rounded-md bg-zinc-200 px-3 py-1.5 text-xs font-medium hover:bg-zinc-300 disabled:opacity-50 dark:bg-zinc-700 dark:hover:bg-zinc-600"
           >
             Tải evidence export
-          </button>
+          </Button>
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <label className="block cursor-pointer rounded-md border border-dashed border-zinc-400 px-3 py-2 text-sm">
-            <span className="text-zinc-600 dark:text-zinc-300">
-              evidence.json
-            </span>
-            <span className="ml-2 font-mono text-xs text-zinc-400">
+          <label className="border-border block cursor-pointer rounded-md border border-dashed px-3 py-2 text-sm">
+            <span>evidence.json</span>
+            <span className="text-muted-foreground ml-2 font-mono text-xs">
               {evidenceFile?.name ?? "chọn file…"}
             </span>
             <input
@@ -262,11 +268,9 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
               onChange={(e) => setEvidenceFile(e.target.files?.[0] ?? null)}
             />
           </label>
-          <label className="block cursor-pointer rounded-md border border-dashed border-zinc-400 px-3 py-2 text-sm">
-            <span className="text-zinc-600 dark:text-zinc-300">
-              artifacts (xlsx, json…)
-            </span>
-            <span className="ml-2 font-mono text-xs text-zinc-400">
+          <label className="border-border block cursor-pointer rounded-md border border-dashed px-3 py-2 text-sm">
+            <span>artifacts (xlsx, json…)</span>
+            <span className="text-muted-foreground ml-2 font-mono text-xs">
               {artifactFiles.length > 0
                 ? `${artifactFiles.length} file`
                 : "chọn nhiều file…"}
@@ -281,14 +285,14 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
             />
           </label>
         </div>
-        <button
+        <Button
+          className="mt-3"
           onClick={runVerify}
           disabled={busy || !evidenceFile || artifactFiles.length === 0}
-          className="mt-3 rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {busy ? "Đang xác minh…" : "Xác minh"}
-        </button>
-        {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
+        </Button>
+        {err && <p className="text-destructive mt-2 text-xs">{err}</p>}
       </div>
 
       {result && (
@@ -318,7 +322,9 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
           <ul className="mt-3 space-y-1 text-xs">
             {result.artifacts.map((a) => (
               <li key={a.deliverable_id} className="flex gap-2">
-                <span className={a.ok ? "text-emerald-600" : "text-red-600"}>
+                <span
+                  className={a.ok ? "text-emerald-600" : "text-destructive"}
+                >
                   {a.ok ? "OK" : a.missing ? "MISSING" : "MISMATCH"}
                 </span>
                 <span className="font-mono">{a.name}</span>

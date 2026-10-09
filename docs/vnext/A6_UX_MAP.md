@@ -181,3 +181,19 @@ This doc is the map; each proposal above names the surface it would touch.
 counts) exercising the shared components' wire assumptions — docs aid only,
 mirrors the kernel `test_api_contract.py` shapes (lowercase TaskStatus,
 `options_v2` slugs, `seal_ok` tri-state).
+
+## 5. Proposal status (post-map)
+
+Implementation slices since `e8f12bab` — the §1-3 inventory above stays
+verified as of that commit:
+
+- #1+#2 (governed intake, task-mode pick), #3 (run↔thread bridge), #4
+  (deep link), #5 (SSE activity render), #6 (resume box): shipped —
+  product PRs #40/#41+.
+- #8 (unified `lifecycleStatus` + `LifecycleBadge`), #9 (`components/ui`
+  dedup + token adoption; `exploratory.ts`, `UnverifiedBadge`, and dead
+  `unionInputs`/`inputsFor` deleted — `isZipInput` survives, wired by
+  #1), #10 (`/verify` root route): shipped — A6 slice 2 PR.
+- Still open: #7 [decision-needed], #11 [decision-needed], #12
+  [decision-needed], #13 (A5a merged — mechanically feasible now,
+  unimplemented), #14 [blocked on A5b].

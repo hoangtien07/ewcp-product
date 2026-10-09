@@ -6,6 +6,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   launchExecutionRun,
   listOutcomes,
@@ -120,23 +122,21 @@ export function EwcpRunsPage({
         />
       </aside>
       <main className="space-y-4">
-        <div className="rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
-          <textarea
+        <div className="border-border bg-card rounded-lg border p-4">
+          <Textarea
             value={intent}
             onChange={(e) => setIntent(e.target.value)}
             rows={2}
             placeholder="Mô tả việc cần làm — vd: đối soát hóa đơn kỳ 09/2025"
-            className="w-full rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 text-sm dark:border-zinc-600"
           />
           <div className="mt-2 flex items-center gap-2">
-            <button
+            <Button
               onClick={() => void submit()}
               disabled={busy || !intent.trim() || governedSpec !== null}
-              className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {busy && !governedSpec ? "Đang chạy…" : "Chạy"}
-            </button>
-            {err && <p className="text-xs text-red-600">{err}</p>}
+            </Button>
+            {err && <p className="text-destructive text-xs">{err}</p>}
           </div>
         </div>
         {governedSpec && (

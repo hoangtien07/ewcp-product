@@ -51,7 +51,9 @@ describe("ExecutionRunList", () => {
     await waitFor(() =>
       expect(screen.getByText("khám phá thị trường")).toBeTruthy(),
     );
-    expect(screen.getByText("Hoàn tất")).toBeTruthy();
+    // a completed run with no workrun view reads "agent_finished" in the
+    // WP-A6 vocabulary
+    expect(screen.getByText("Agent hoàn tất")).toBeTruthy();
   });
 
   test("empty state", async () => {

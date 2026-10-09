@@ -31,10 +31,13 @@ export function ExecutionRunList({
 
   useEffect(load, [load, refreshKey]);
 
-  if (err) return <p className="text-xs text-red-600">{err}</p>;
-  if (runs === null) return <p className="text-xs text-zinc-500">Đang tải…</p>;
+  if (err) return <p className="text-destructive text-xs">{err}</p>;
+  if (runs === null)
+    return <p className="text-muted-foreground text-xs">Đang tải…</p>;
   if (runs.length === 0)
-    return <p className="text-xs text-zinc-500">Chưa có ExecutionRun nào.</p>;
+    return (
+      <p className="text-muted-foreground text-xs">Chưa có ExecutionRun nào.</p>
+    );
 
   return (
     <ul className="space-y-2">
