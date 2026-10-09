@@ -1,5 +1,7 @@
 # GP-01 — General-Purpose Breadth Evaluation (measured)
 
+> **Re-evaluated 2026-10-09 after fixes #45/#47 — see [GP01_REEVAL.md](GP01_REEVAL.md).**
+
 **Date:** 2026-10-09 · **Gate source:** EWCP master plan, gate GP-01
 **Stack:** ewcp-product `product/vnext@0351f24f` + enterprise-work-control-plane `main@5a79f8f`
 **Lane under test:** the general/exploratory chat lane — `POST /api/ewcp/runs` with `task_mode=general` (the exact call the `/ewcp` exploratory pane makes), plus the native `POST /api/threads/{tid}/runs` for follow-up turns (the exact call the chat UI makes).
