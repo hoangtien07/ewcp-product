@@ -47,8 +47,13 @@ function summarizeEventData(data: unknown): string {
 
 export function ExecutionRunThread({
   executionRunId,
+  onWorkrunChange,
 }: {
   executionRunId: string;
+  /** fired whenever the kernel workrun view is refreshed (initial
+   * load, stream-end refresh, and every resolved decision) — the
+   * parent bumps its list refetch so badges track kernel truth. */
+  onWorkrunChange?: (workrun: RunView) => void;
 }) {
   const [run, setRun] = useState<ExecutionRun | null>(null);
   const [workrun, setWorkrun] = useState<RunView | null>(null);
@@ -66,6 +71,14 @@ export function ExecutionRunThread({
       .then(setWorkrun)
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [run?.execution_run_id, run?.workrun_id]);
+
+  const handleWorkrunDone = useCallback(
+    (w: RunView) => {
+      setWorkrun(w);
+      onWorkrunChange?.(w);
+    },
+    [onWorkrunChange],
+  );
 
   // identity → decision gating
   useEffect(() => {
@@ -276,7 +289,7 @@ export function ExecutionRunThread({
                   ? "Còn câu hỏi chưa trả lời — duyệt sau khi hoàn tất."
                   : undefined
               }
-              onDone={setWorkrun}
+              onDone={handleWorkrunDone}
             />
           ))}
           {showApprovalGate && (
@@ -291,7 +304,7 @@ export function ExecutionRunThread({
               executionRunId={run.execution_run_id}
               run={workrun}
               canDecide={canDecide}
-              onDone={setWorkrun}
+              onDone={handleWorkrunDone}
             />
           )}
           {workrun.deliverables.length > 0 && (

@@ -52,6 +52,8 @@ export const FALLBACK_SPECS: OutcomeSpecView[] = [
         required: true,
       },
     ],
+    required_context: [],
+    context_schema: [],
   },
   {
     outcome_type: "invoice_recon",
@@ -72,5 +74,10 @@ export const FALLBACK_SPECS: OutcomeSpecView[] = [
         required: true,
       },
     ],
+    // kernel invoice_recon spec: required_context=(mst_doanh_nghiep, ky)
+    // with NO context_schema — without these the intake can never
+    // satisfy intake's 422 contract
+    required_context: ["mst_doanh_nghiep", "ky"],
+    context_schema: [],
   },
 ];

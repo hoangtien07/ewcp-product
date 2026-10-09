@@ -82,7 +82,10 @@ export function EwcpRunsPage({
   }, [intent, busy]);
 
   const submitGoverned = useCallback(
-    async (slotFiles: Record<string, File[]>) => {
+    async (
+      slotFiles: Record<string, File[]>,
+      contextValues: Record<string, string>,
+    ) => {
       if (!governedSpec || busy) return;
       setBusy(true);
       setErr(null);
@@ -92,6 +95,7 @@ export function EwcpRunsPage({
           taskMode: "governed",
           outcomeType: governedSpec.outcome_type,
           slotFiles,
+          fields: contextValues,
         });
         setIntent("");
         setGovernedSpec(null);
@@ -144,7 +148,9 @@ export function EwcpRunsPage({
             spec={governedSpec}
             busy={busy}
             onCancel={() => setGovernedSpec(null)}
-            onLaunch={(slotFiles) => void submitGoverned(slotFiles)}
+            onLaunch={(slotFiles, contextValues) =>
+              void submitGoverned(slotFiles, contextValues)
+            }
           />
         )}
         <CapabilityGallery
@@ -153,7 +159,15 @@ export function EwcpRunsPage({
           onIntent={setIntent}
           onGoverned={pickGoverned}
         />
-        {activeId && <ExecutionRunThread executionRunId={activeId} />}
+        {activeId && (
+          <ExecutionRunThread
+            executionRunId={activeId}
+            // a resolved decision (approve→seal, ask-back answers)
+            // changes kernel truth — refetch the list so the badge
+            // tracks `workrun_status`, not the pre-seal snapshot
+            onWorkrunChange={() => setRefreshKey((k) => k + 1)}
+          />
+        )}
       </main>
     </div>
   );

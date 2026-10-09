@@ -22,6 +22,8 @@ const recon: OutcomeSpecView = {
       required: true,
     },
   ],
+  required_context: ["mst_doanh_nghiep", "ky"],
+  context_schema: [],
 };
 
 describe("CapabilityGallery", () => {
@@ -71,6 +73,8 @@ describe("CapabilityGallery", () => {
       description: "x",
       required_checks: [],
       requires_inputs: [],
+      required_context: [],
+      context_schema: [],
     };
     render(
       <CapabilityGallery

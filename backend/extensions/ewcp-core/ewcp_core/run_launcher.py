@@ -528,6 +528,17 @@ class RunLauncher:
         if existing is not None:
             if existing.intent != intent or existing.task_mode != task_mode.value:
                 raise LaunchConflict(f"idempotency_key {key!r} already used for a different launch")
+            if workrun_id and not existing.workrun_id:
+                # A governed retry lands here when the map row exists but
+                # never got its kernel link (created via a form intake
+                # whose bind raced the admission). Bind the workrun this
+                # call just minted — otherwise the row stays unbound
+                # forever and the `?workrun_ids=` list projection can
+                # never see it (F3).
+                await self._store.bind_workrun(existing.execution_run_id, workrun_id)
+                rebound = await self._store.get(existing.execution_run_id)
+                if rebound is not None:
+                    existing = rebound
             if existing.run_id is not None:
                 # Already admitted — replay the stored row, create nothing.
                 return LaunchOutcome(record=existing, run=None, idempotent_replay=True)
