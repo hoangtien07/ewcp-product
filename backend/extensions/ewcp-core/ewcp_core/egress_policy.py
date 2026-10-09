@@ -94,6 +94,11 @@ _NETWORK_TOOLS = frozenset({"web_search", "web_fetch", "image_search", "web_capt
 _NETWORK_TOOL_PREFIXES = ("browser_",)
 _URL_ARG_KEYS = ("url", "uri", "endpoint")
 
+# Kernel-bound agent tools (invoke_tools.py). They take no url arg — the
+# wire destination is the configured kernel_url, so their channel check
+# authorizes that destination instead of the tool-name allowlists.
+_KERNEL_BOUND_TOOLS = frozenset({"ewcp_invoke", "ewcp_capabilities"})
+
 # Model attribute names providers use to carry the endpoint URL.
 _MODEL_ENDPOINT_ATTRS = (
     "base_url",
@@ -277,8 +282,9 @@ def _deny_marker(message: Any) -> dict[str, Any] | None:
 class EgressPolicy:
     """Resolves and enforces per-tenant/run egress modes on every channel."""
 
-    def __init__(self, config: EgressConfig) -> None:
+    def __init__(self, config: EgressConfig, *, kernel_url: str | None = None) -> None:
         self.config = config
+        self._kernel_url = kernel_url
 
     @classmethod
     def resolve_config(cls, plugin_config: Mapping[str, Any]) -> EgressConfig:
@@ -441,6 +447,9 @@ class EgressPolicy:
         if policy.mode == APPROVED_CLOUD:
             return ChannelDecision(True, CHANNEL_TOOL)
 
+        if name in _KERNEL_BOUND_TOOLS:
+            return self._check_kernel_destination(policy)
+
         if policy.mode == LOCAL_ONLY:
             if name in _SAFE_BUILTIN_TOOLS:
                 return ChannelDecision(True, CHANNEL_TOOL)
@@ -485,6 +494,38 @@ class EgressPolicy:
                 f"tool {name!r} destination not in allowed_domains under restricted — denied",
             )
         return ChannelDecision(False, CHANNEL_TOOL, f"tool {name!r} egress-capable or unknown under restricted — denied")
+
+    def _check_kernel_destination(self, policy: RunPolicy) -> ChannelDecision:
+        """Destination authorization for kernel-bound tools (ewcp_invoke /
+        ewcp_capabilities). The wire destination is the configured
+        kernel_url — the same per-destination authorization #37 added for
+        url-arg tools, applied to a fixed destination the model cannot
+        choose. Under local_only the kernel must be provably in-boundary
+        (loopback/LAN literal, or operator-declared in allowed_domains);
+        under restricted it must be declared in allowed_domains."""
+        host = urlparse(self._kernel_url or "").hostname
+        if not host:
+            return ChannelDecision(
+                False,
+                CHANNEL_TOOL,
+                "kernel-bound tool: EWCP kernel_url unconfigured — destination unprovable, denied (fail-closed)",
+            )
+        if policy.mode == LOCAL_ONLY:
+            if _is_local_host(host) or _host_in_list(host, self.config.allowed_domains):
+                return ChannelDecision(True, CHANNEL_TOOL)
+            return ChannelDecision(
+                False,
+                CHANNEL_TOOL,
+                f"kernel destination {host!r} is not in-boundary under local_only — denied",
+            )
+        # restricted
+        if _host_in_list(host, self.config.allowed_domains):
+            return ChannelDecision(True, CHANNEL_TOOL)
+        return ChannelDecision(
+            False,
+            CHANNEL_TOOL,
+            f"kernel destination {host!r} not in allowed_domains under restricted — denied",
+        )
 
     # -- run admission -------------------------------------------------------
 

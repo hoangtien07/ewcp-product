@@ -57,6 +57,7 @@ never interpolated into URLs or log lines.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -142,6 +143,100 @@ class BudgetDenied(RuntimeError):
         super().__init__(str(self.detail.get("message") or self.detail.get("error") or "budget exceeded"))
 
 
+class KernelInvokeError(RuntimeError):
+    """Structured rejection from the capability-invoke contract
+    (`GET /outcomes/{type}` or `POST /outcomes/{type}/run`).
+
+    `error` is the contract's stable machine code (unauthenticated,
+    tenant_mismatch, unknown_capability, conflict, missing_required_input,
+    schema_invalid, unsupported_version, idempotency_payload_mismatch,
+    payload_too_large, invalid_request, run_failed); `message` is the
+    human-readable line; `extra` carries code-specific fields such as
+    `missing: [...]` from a 422."""
+
+    # guidance vocabulary: "correct" = fix payload/args then retry;
+    # "retry" = transient, resend as-is; "fatal" = do not retry.
+    _CORRECTABLE = frozenset(
+        {
+            "missing_required_input",
+            "schema_invalid",
+            "invalid_request",
+            "unknown_capability",
+            "idempotency_payload_mismatch",
+            "payload_too_large",
+        }
+    )
+    _FATAL = frozenset({"unsupported_version", "unauthenticated", "tenant_mismatch"})
+
+    def __init__(
+        self,
+        *,
+        status: int,
+        error: str,
+        message: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.status = status
+        self.error = error or "invalid_request"
+        self.message = message or self.error
+        self.extra = dict(extra or {})
+        super().__init__(f"{status} {self.error}: {self.message}")
+
+    @property
+    def guidance(self) -> str:
+        """What the caller should do next (contract §error-table):
+        payload mismatch / validation errors are retryable *with
+        correction*; unsupported_version is fatal; transient statuses
+        retry as-is; anything unrecognized is fatal (fail-safe)."""
+        if self.error in self._CORRECTABLE:
+            return "correct"
+        if self.error in self._FATAL:
+            return "fatal"
+        if self.status in _RETRYABLE_STATUS:
+            return "retry"
+        return "fatal"
+
+
+def _invoke_error(exc: httpx.HTTPStatusError) -> KernelInvokeError:
+    """Map a kernel error response to KernelInvokeError, preserving the
+    contract's `{error, message}` pair plus any extra fields."""
+    resp = exc.response
+    error = "invalid_request"
+    message = ""
+    extra: dict[str, Any] = {}
+    try:
+        body = resp.json()
+    except Exception:  # noqa: BLE001 — non-JSON error page
+        body = None
+    if isinstance(body, dict):
+        error = str(body.get("error") or error)
+        message = str(body.get("message") or body.get("detail") or "")
+        extra = {k: v for k, v in body.items() if k not in {"error", "message", "detail"}}
+    if not message:
+        message = (resp.text or "")[:300] or type(exc).__name__
+    return KernelInvokeError(status=resp.status_code, error=error, message=message, extra=extra)
+
+
+def _ctx_scalar(value: Any) -> str:
+    """Render a typed context value as a multipart form scalar.
+    bools as true/false, numbers as str, structured values as JSON
+    (the kernel re-parses by the declared context type)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float, str)):
+        return str(value)
+    return json.dumps(value)
+
+
+@dataclass(frozen=True)
+class InvokeResult:
+    """`POST /outcomes/{type}/run` outcome — the run view plus whether
+    the kernel replayed an earlier run under the same Idempotency-Key."""
+
+    run: dict[str, Any]
+    idempotent_replay: bool
+
+
 # (field-name, filename, body-bytes-or-str, optional content-type)
 UploadTuple = tuple[str, "bytes | str", "str | None"]
 
@@ -219,6 +314,16 @@ class KernelClient:
         """GET /outcomes — outcome spec wire views (input slots + context
         schema included; the kernel exposes no grants surface)."""
         resp = await self._request("GET", "/outcomes", allow_retry=True)
+        return resp.json()
+
+    async def get_outcome_descriptor(self, outcome_type: str) -> dict[str, Any]:
+        """GET /outcomes/{type} — the capability descriptor (contract v1):
+        capability_id, side_effect_class, input_schema, idempotency block.
+        404 surfaces as KernelInvokeError(error='unknown_capability')."""
+        try:
+            resp = await self._request("GET", f"/outcomes/{outcome_type}", allow_retry=True)
+        except httpx.HTTPStatusError as exc:
+            raise _invoke_error(exc) from exc
         return resp.json()
 
     async def get_workrun(self, workrun_id: str) -> dict[str, Any]:
@@ -382,6 +487,51 @@ class KernelClient:
             allow_retry=idempotency_key is not None,
         )
         return TaskSubmitResult(
+            run=resp.json(),
+            idempotent_replay=resp.headers.get("idempotent-replay") == "true",
+        )
+
+    async def invoke_outcome(
+        self,
+        outcome_type: str,
+        *,
+        context: Mapping[str, Any] | None = None,
+        files: Mapping[str, Sequence[UploadTuple]] | None = None,
+        tenant_id: str | None = None,
+        invocation_id: str | None = None,
+        execution_run_id: str | None = None,
+        idempotency_key: str,
+        contract_version: str = "1",
+    ) -> InvokeResult:
+        """POST /outcomes/{type}/run — the typed capability contract
+        (contract_version=1). Always multipart so declared context fields
+        and file slots ride the same encoding.
+
+        `idempotency_key` is REQUIRED: the kernel dedupes (tenant, key) and
+        replays the stored run on identical payload, so bounded transport
+        retry is safe — retries reuse the SAME key and identical body.
+        `invocation_id`/`execution_run_id` are the contract's correlation
+        fields, echoed back in the run view."""
+        form: list[tuple[str, tuple]] = [("contract_version", (None, contract_version))]
+        if tenant_id:
+            form.append(("tenant_id", (None, tenant_id)))
+        if invocation_id:
+            form.append(("invocation_id", (None, invocation_id)))
+        if execution_run_id:
+            form.append(("execution_run_id", (None, execution_run_id)))
+        form += [(key, (None, _ctx_scalar(value))) for key, value in (context or {}).items() if value is not None]
+        form += [(slot, (filename, body) if content_type is None else (filename, body, content_type)) for slot, members in (files or {}).items() for filename, body, content_type in members]
+        try:
+            resp = await self._request(
+                "POST",
+                f"/outcomes/{outcome_type}/run",
+                files=form,
+                headers={"Idempotency-Key": idempotency_key},
+                allow_retry=True,
+            )
+        except httpx.HTTPStatusError as exc:
+            raise _invoke_error(exc) from exc
+        return InvokeResult(
             run=resp.json(),
             idempotent_replay=resp.headers.get("idempotent-replay") == "true",
         )
