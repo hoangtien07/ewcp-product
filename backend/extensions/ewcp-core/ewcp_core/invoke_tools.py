@@ -346,6 +346,11 @@ async def invoke_impl(
     key = str(idempotency_key) if idempotency_key else f"invoke-{uuid.uuid4().hex}"
     invocation_id = f"inv-{uuid.uuid4().hex}"
     execution_run_id = await _execution_run_id(deps, ctx)
+    # C10: assert the session-bound user on X-Ewcp-Actor so the kernel
+    # binds ProposedAction.requester / audit principals to the product
+    # identity. Minted server-side from runtime context — the model can
+    # neither pick nor override it (no actor tool arg exists).
+    actor = f"user:{ctx.get('user_id') or get_effective_user_id()}"
 
     try:
         result: InvokeResult = await client.invoke_outcome(
@@ -356,6 +361,7 @@ async def invoke_impl(
             invocation_id=invocation_id,
             execution_run_id=execution_run_id,
             idempotency_key=key,
+            actor=actor,
         )
     except KernelInvokeError as exc:
         return _invoke_error_payload(exc)

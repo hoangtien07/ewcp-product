@@ -218,6 +218,25 @@ async def test_invoke_replay_flag_from_header() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invoke_outcome_sends_actor_header() -> None:
+    """C10: `actor` rides as X-Ewcp-Actor alongside the Idempotency-Key —
+    the kernel binds it into ProposedAction.requester for governed
+    writes."""
+    rec = _Recorder([_json_response(_RUN_VIEW)])
+    client = _client(rec)
+
+    await client.invoke_outcome(
+        "invoice_recon",
+        actor="user:u-7",
+        idempotency_key="key-actor",
+    )
+
+    req = rec.requests[0]
+    assert req.headers["x-ewcp-actor"] == "user:u-7"
+    assert req.headers["idempotency-key"] == "key-actor"
+
+
+@pytest.mark.asyncio
 async def test_invoke_409_payload_mismatch_is_correction_guided() -> None:
     rec = _Recorder([_json_response({"detail": "mismatch", "error": "idempotency_payload_mismatch", "message": "same key, different payload"}, status=409)])
     client = _client(rec)
@@ -437,6 +456,69 @@ async def test_invoke_caller_supplied_idempotency_key_passes_through() -> None:
     await invoke_tools.invoke_impl(deps, CTX, outcome_type="invoice_recon", context={"period": "p"}, idempotency_key="agent-key-1")
 
     assert rec.requests[1].headers["idempotency-key"] == "agent-key-1"
+
+
+@pytest.mark.asyncio
+async def test_invoke_binds_actor_from_runtime_user() -> None:
+    """C10: the agent's invoke asserts the session-bound user on
+    X-Ewcp-Actor so ProposedAction.requester binds a product identity —
+    the model cannot pick or override it (actor is not a tool arg)."""
+    rec = _descriptor_then_run()
+    deps = _deps(_client(rec))
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            CTX,
+            outcome_type="invoice_recon",
+            context={"period": "p"},
+        )
+    )
+
+    assert out["ok"] is True
+    assert rec.requests[1].headers["x-ewcp-actor"] == "user:u-1"
+
+
+@pytest.mark.asyncio
+async def test_invoke_actor_anon_scoped_without_user_context() -> None:
+    """C10: with no session identity the header degrades to the
+    contextvar's anon scope (`user:default`) — never attacker-chosen."""
+    rec = _descriptor_then_run()
+    deps = _deps(_client(rec))
+    ctx = {"thread_id": "t-1", "run_id": "r-1"}  # no user_id
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            ctx,
+            outcome_type="invoice_recon",
+            context={"period": "p"},
+        )
+    )
+
+    assert out["ok"] is True
+    assert rec.requests[1].headers["x-ewcp-actor"] == "user:default"
+
+
+@pytest.mark.asyncio
+async def test_invoke_actor_ignores_model_supplied_context_keys() -> None:
+    """C10 anti-impersonation: capability `context` values are form
+    fields — a model-crafted key masquerading as the actor cannot reach
+    the header."""
+    rec = _descriptor_then_run()
+    deps = _deps(_client(rec))
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            CTX,
+            outcome_type="invoice_recon",
+            context={"period": "p", "x_ewcp_actor": "user:admin", "actor": "user:admin"},
+        )
+    )
+
+    assert out["ok"] is True
+    assert rec.requests[1].headers["x-ewcp-actor"] == "user:u-1"
 
 
 @pytest.mark.asyncio
