@@ -429,6 +429,15 @@ def _build_runtime_middlewares(
 
         tail.append(ToolReceiptMiddleware(render_mode=receipts_render_mode))
 
+    # Arg-name aliases normalize small-model drift (e.g. `contents` ->
+    # `content`) before handle resolution and every argument-inspecting
+    # policy below, so they all see canonical names. The layer never
+    # short-circuits, so the receipt ledger is unaffected; staying inside it
+    # means receipts record the args that actually executed.
+    from deerflow.agents.middlewares.tool_arg_alias_middleware import ToolArgAliasMiddleware
+
+    tail.append(ToolArgAliasMiddleware())
+
     # Resolve handles before any policy inspects arguments. Receipts enclose
     # this layer too, so unknown-handle errors remain part of the ledger.
     if app_config.tool_artifacts.enabled and app_config.tool_artifacts.resolve_handles_in_args:
