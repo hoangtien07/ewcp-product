@@ -43,6 +43,7 @@ import {
 import type { ArtifactEntry } from "@/core/threads/types";
 import { extractTitleFromMarkdown } from "@/core/utils/markdown";
 import { env } from "@/env";
+import { EwcpInvokeStep } from "@/ewcp/components/ewcp-invoke-step";
 import { cn } from "@/lib/utils";
 
 import { useArtifacts } from "../artifacts";
@@ -646,6 +647,7 @@ function getToolCallKind(name: string) {
     case "bash":
     case "ask_clarification":
     case "write_todos":
+    case "ewcp_invoke":
       return name;
     default:
       return "generic";
@@ -1018,6 +1020,12 @@ function ToolCall({
         label={resolveLabel(t.toolCalls.writeTodos)}
         icon={ListTodoIcon}
       ></ChainOfThoughtStep>
+    );
+  } else if (kind === "ewcp_invoke") {
+    // EWCP A6 #13 (hybrid lane): the governed invoke renders as a
+    // governed card — the step component lives boxed in @/ewcp.
+    return (
+      <EwcpInvokeStep key={id} args={args} resultMessage={resultMessage} />
     );
   } else {
     const description: string | undefined = (args as { description: string })

@@ -29,7 +29,9 @@ export interface ExecutionRun {
   thread_id: string;
   run_id: string | null;
   workrun_id: string | null;
-  task_mode: "general" | "governed";
+  // "invoke" rows are projected by the ewcp_invoke tool (A6 #13 hybrid
+  // lane): one row per capability call inside a normal chat thread.
+  task_mode: "general" | "governed" | "invoke";
   status: ExecutionRunStatus;
   intent: string;
   idempotency_key: string;
