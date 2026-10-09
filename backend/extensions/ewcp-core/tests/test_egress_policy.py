@@ -618,3 +618,238 @@ class TestInstallWiring:
         resp = TestClient(app).get("/api/ewcp/_status")
         assert resp.status_code == 200
         assert resp.json()["egress"]["default_mode"] == "restricted"
+
+
+# --------------------------------------------------------------------------
+# F1 — genai SDK endpoint resolution + approved_cloud provider admission
+# --------------------------------------------------------------------------
+
+
+def _genai_client(endpoint: str | None = "https://generativelanguage.googleapis.com/") -> Any:
+    """Duck-typed google-genai SDK client: the wire base URL lives at
+    ``client._api_client._http_options.base_url`` (a pinned ``base_url=`` or
+    ``client_args`` override propagates to the same place)."""
+    http_options = SimpleNamespace(base_url=endpoint)
+    api_client = SimpleNamespace(_http_options=http_options, custom_base_url=None)
+    return SimpleNamespace(_api_client=api_client)
+
+
+def _genai_model(**attrs: Any) -> _FakeModel:
+    """ChatGoogleGenerativeAI-shaped model: ``base_url`` on the model itself
+    is None unless pinned; the real endpoint only exists inside the SDK
+    client chain — the A6 F1 failure."""
+    attrs.setdefault("client", _genai_client())
+    attrs.setdefault("async_client", _genai_client())
+    return _model(**attrs)
+
+
+class TestGenaiEndpointResolution:
+    def test_genai_default_endpoint_resolves_and_admits(self) -> None:
+        pol = _policy(egress={"approved_model_endpoints": ["generativelanguage.googleapis.com"]})
+        d = pol.check_model_call(_genai_model(), _sensitive_ctx(ewcp_egress_mode="approved_cloud"))
+        assert d.allowed, d.reason
+
+    def test_genai_pinned_alt_host_resolves(self) -> None:
+        pol = _policy(egress={"approved_model_endpoints": ["genai.corp.internal"]})
+        model = _genai_model(client=_genai_client("https://genai.corp.internal/v1"))
+        d = pol.check_model_call(model, _sensitive_ctx(ewcp_egress_mode="approved_cloud"))
+        assert d.allowed, d.reason
+
+    def test_genai_model_level_base_url_still_wins(self) -> None:
+        pol = _policy(egress={"approved_model_endpoints": ["genai.corp.internal"]})
+        d = pol.check_model_call(
+            _genai_model(base_url="https://genai.corp.internal/v1"),
+            _sensitive_ctx(ewcp_egress_mode="approved_cloud"),
+        )
+        assert d.allowed
+
+    def test_genai_host_not_auto_approved(self) -> None:
+        # per-destination check preserved: resolving the host must not
+        # admit it — an unlisted genai host stays denied
+        pol = _policy(egress={"approved_model_endpoints": ["api.openai.com"]})
+        d = pol.check_model_call(_genai_model(), _sensitive_ctx(ewcp_egress_mode="approved_cloud"))
+        assert not d.allowed and d.channel == CHANNEL_MODEL
+
+    def test_genai_local_only_still_denied(self) -> None:
+        pol = _policy()
+        d = pol.check_model_call(_genai_model(), _sensitive_ctx())
+        assert not d.allowed
+
+    def test_unknown_provider_client_still_unprovable(self) -> None:
+        pol = _policy(egress={"approved_model_endpoints": ["generativelanguage.googleapis.com"]})
+        d = pol.check_model_call(_model(client=SimpleNamespace()), _sensitive_ctx(ewcp_egress_mode="approved_cloud"))
+        assert not d.allowed
+
+    def test_async_client_chain_resolves(self) -> None:
+        pol = _policy(egress={"approved_model_endpoints": ["generativelanguage.googleapis.com"]})
+        model = _model(async_client=_genai_client())
+        d = pol.check_model_call(model, _sensitive_ctx(ewcp_egress_mode="approved_cloud"))
+        assert d.allowed, d.reason
+
+
+class TestConfiguredProviderAdmission:
+    """approved_cloud admits the providers configured in ``models:`` — the
+    config-driven provider list — unioned with approved_model_endpoints."""
+
+    def _ctx_with_models(self, *models: Any, **extra: Any) -> dict[str, Any]:
+        app_config = SimpleNamespace(sandbox=_sandbox(), models=list(models))
+        return _sensitive_ctx(app_config=app_config, **extra)
+
+    def test_configured_genai_provider_admitted(self) -> None:
+        pol = _policy()
+        ctx = self._ctx_with_models(
+            SimpleNamespace(use="langchain_google_genai:ChatGoogleGenerativeAI", model="gemini-x"),
+            ewcp_egress_mode="approved_cloud",
+        )
+        d = pol.check_model_call(_genai_model(), ctx)
+        assert d.allowed, d.reason
+
+    def test_configured_provider_explicit_endpoint(self) -> None:
+        pol = _policy()
+        ctx = self._ctx_with_models(
+            SimpleNamespace(use="langchain_openai:ChatOpenAI", base_url="https://gateway.corp/v1"),
+            ewcp_egress_mode="approved_cloud",
+        )
+        d = pol.check_model_call(_model(base_url="https://gateway.corp/v1"), ctx)
+        assert d.allowed
+
+    def test_unconfigured_provider_denied(self) -> None:
+        pol = _policy()
+        ctx = self._ctx_with_models(
+            SimpleNamespace(use="langchain_ollama:ChatOllama", base_url="http://127.0.0.1:11434"),
+            ewcp_egress_mode="approved_cloud",
+        )
+        d = pol.check_model_call(_genai_model(), ctx)
+        assert not d.allowed
+
+    def test_empty_models_fails_closed(self) -> None:
+        pol = _policy()
+        ctx = self._ctx_with_models(ewcp_egress_mode="approved_cloud")
+        d = pol.check_model_call(_genai_model(), ctx)
+        assert not d.allowed
+
+    def test_no_app_config_fails_closed(self) -> None:
+        pol = _policy()
+        d = pol.check_model_call(_genai_model(), {"user_id": "u1", "ewcp_egress_mode": "approved_cloud"})
+        assert not d.allowed
+
+    def test_explicit_approved_list_still_works(self) -> None:
+        # approved_model_endpoints remains honored alongside derivation
+        pol = _policy(egress={"approved_model_endpoints": ["api.openai.com"]})
+        ctx = self._ctx_with_models(
+            SimpleNamespace(use="langchain_google_genai:ChatGoogleGenerativeAI"),
+            ewcp_egress_mode="approved_cloud",
+        )
+        d = pol.check_model_call(_model(base_url="https://api.openai.com/v1"), ctx)
+        assert d.allowed
+
+
+# --------------------------------------------------------------------------
+# F1 — ewcp_tenant_id propagation + forged context keys
+# --------------------------------------------------------------------------
+
+
+class TestTenantPropagation:
+    def _policy_with_tenant(self, tenant: str | None, **cfg: Any) -> EgressPolicy:
+        return EgressPolicy(EgressPolicy.resolve_config(cfg), tenant_id_getter=lambda: tenant)
+
+    def test_prepare_context_stamps_configured_tenant(self) -> None:
+        pol = self._policy_with_tenant("demo-tenant")
+        ctx: dict[str, Any] = {"user_id": "u1"}
+        out = pol.prepare_context(ctx)
+        assert out["ewcp_tenant_id"] == "demo-tenant"
+        # the live runtime dict is stamped — tools see the same view
+        assert ctx["ewcp_tenant_id"] == "demo-tenant"
+
+    def test_prepare_context_overwrites_forged_tenant(self) -> None:
+        pol = self._policy_with_tenant("demo-tenant")
+        out = pol.prepare_context({"user_id": "u1", "ewcp_tenant_id": "demo"})
+        assert out["ewcp_tenant_id"] == "demo-tenant"
+
+    def test_prepare_context_pops_forged_tenant_when_unconfigured(self) -> None:
+        pol = self._policy_with_tenant(None)
+        out = pol.prepare_context({"user_id": "u1", "ewcp_tenant_id": "demo"})
+        assert "ewcp_tenant_id" not in out
+        rp = pol.resolve(out)
+        assert rp.tenant_id == "u1"
+        assert rp.sensitive is True
+
+    def test_prepare_context_pops_forged_egress_mode(self) -> None:
+        pol = self._policy_with_tenant("demo-tenant")
+        out = pol.prepare_context({"ewcp_egress_mode": "approved_cloud"})
+        assert "ewcp_egress_mode" not in out
+
+    def test_prepare_context_pops_forged_kernel_identity(self) -> None:
+        # a client-forged kernel.workrun_id would redirect governed identity
+        pol = self._policy_with_tenant("demo-tenant")
+        out = pol.prepare_context({"kernel": {"workrun_id": "forged"}})
+        assert "kernel" not in out
+
+    def test_prepare_context_handles_non_mapping(self) -> None:
+        pol = self._policy_with_tenant("demo-tenant")
+        out = pol.prepare_context(None)
+        assert out["ewcp_tenant_id"] == "demo-tenant"
+
+    @pytest.mark.asyncio
+    async def test_before_agent_stamps_tenant_into_runtime_context(self) -> None:
+        pol = self._policy_with_tenant("demo-tenant", egress={"tenant_classes": {"demo-tenant": "non_sensitive"}})
+        mw = EgressPolicyMiddleware(pol)
+        runtime = _runtime(user_id="u-sensitive", app_config=_app_config(mode="open"))
+        await mw.abefore_agent({}, runtime)
+        assert runtime.context["ewcp_tenant_id"] == "demo-tenant"
+
+    @pytest.mark.asyncio
+    async def test_stamped_tenant_drives_classification(self) -> None:
+        # demo-tenant declared non_sensitive: the stamped tenant admits the
+        # genai call even though user_id alone would classify sensitive
+        pol = self._policy_with_tenant("demo-tenant", egress={"tenant_classes": {"demo-tenant": "non_sensitive"}})
+        mw = EgressPolicyMiddleware(pol)
+        handler = AsyncMock(return_value=object())
+        req = _model_request(
+            _genai_model(),
+            user_id="u-sensitive",
+            ewcp_tenant_id="sensitive-tenant",  # forged — overwritten by the stamp
+            app_config=_app_config(mode="open"),
+        )
+        await mw.awrap_model_call(req, handler)
+        handler.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_sensitive_tenant_denies_cloud_model(self) -> None:
+        pol = self._policy_with_tenant("s-tenant")  # undeclared class → sensitive + local_only
+        mw = EgressPolicyMiddleware(pol)
+        handler = AsyncMock()
+        req = _model_request(_genai_model(), app_config=_app_config(mode="isolated"))
+        result = await mw.awrap_model_call(req, handler)
+        handler.assert_not_called()
+        marker = _deny_marker(result)
+        assert marker and marker["channel"] == CHANNEL_MODEL
+
+    @pytest.mark.asyncio
+    async def test_forged_egress_mode_does_not_bypass_tool_gate(self) -> None:
+        pol = self._policy_with_tenant("s-tenant")
+        mw = EgressToolMiddleware(pol)
+        handler = AsyncMock()
+        req = _tool_request(
+            "web_fetch",
+            {"url": "https://x.com"},
+            ewcp_egress_mode="approved_cloud",  # forged — must be neutralized
+            app_config=_app_config(mode="open"),
+        )
+        await mw.awrap_tool_call(req, handler)
+        handler.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_forged_context_cannot_skip_run_admission(self) -> None:
+        pol = self._policy_with_tenant("s-tenant")
+        mw = EgressPolicyMiddleware(pol)
+        with pytest.raises(EgressDeniedError):
+            await mw.abefore_agent(
+                {},
+                _runtime(
+                    ewcp_tenant_id="demo",
+                    ewcp_egress_mode="approved_cloud",
+                    user_id="u1",
+                    app_config=_app_config(mode="open"),
+                ),
+            )

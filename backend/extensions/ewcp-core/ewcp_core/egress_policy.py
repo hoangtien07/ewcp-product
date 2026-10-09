@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -61,6 +61,15 @@ _BUILTIN_NON_SENSITIVE_TENANTS = frozenset({"demo", "default"})
 
 _CTX_TENANT_ID = "ewcp_tenant_id"
 _CTX_EGRESS_MODE = "ewcp_egress_mode"
+_CTX_KERNEL = "kernel"
+
+# Server-owned runtime.context keys a client must never supply. The run body
+# whitelists these out of ``body.context``, but ``body.config['context']``
+# reaches the runtime verbatim — a forged ``ewcp_egress_mode=approved_cloud``
+# or ``ewcp_tenant_id=demo`` would otherwise bypass every channel gate, and a
+# forged ``kernel.workrun_id`` would steal a governed identity for budget
+# accounting. ``prepare_context`` neutralizes them on every entry point.
+_FORGED_CONTEXT_KEYS = (_CTX_EGRESS_MODE, _CTX_KERNEL)
 
 _DENY_KEY = "ewcp_egress_deny"
 
@@ -220,6 +229,82 @@ def _is_local_host(host: str) -> bool:
     return not addr.is_global
 
 
+def _host_of(raw: Any) -> str | None:
+    """Parse a raw endpoint value into a lowercased hostname, if any."""
+    if not raw:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if "://" not in text:
+        text = "http://" + text
+    host = urlparse(text).hostname
+    return host.lower() if host else None
+
+
+# Attribute chains inside provider SDK client objects that carry the real
+# wire endpoint. The google-genai SDK (ChatGoogleGenerativeAI / ChatVertexAI
+# via ``google.genai.Client``) keeps it at
+# ``client._api_client._http_options.base_url``; a pinned ``base_url=`` or
+# ``client_args`` override propagates to the same field. The legacy
+# GenerativeServiceClient exposed ``client_options.api_endpoint`` instead.
+_PROVIDER_SDK_ENDPOINT_PATHS = (
+    ("_api_client", "_http_options", "base_url"),
+    ("_api_client", "custom_base_url"),
+    ("api_endpoint",),
+    ("client_options", "api_endpoint"),
+)
+
+
+def _provider_client_endpoint(client: Any) -> Any:
+    """Raw endpoint string carried inside a provider SDK client, if any."""
+    for path in _PROVIDER_SDK_ENDPOINT_PATHS:
+        value = client
+        for attr in path:
+            value = getattr(value, attr, None)
+            if value is None:
+                break
+        if value:
+            return value
+    return None
+
+
+# Model provider class names whose SDK wires to one canonical host when the
+# operator doesn't pin an explicit endpoint on the ``models:`` entry.
+_PROVIDER_DEFAULT_HOSTS = {
+    "ChatGoogleGenerativeAI": "generativelanguage.googleapis.com",
+}
+
+
+def _configured_model_hosts(app_config: Any) -> tuple[str, ...]:
+    """Endpoint hosts of the providers configured in ``models:``.
+
+    This is the config-driven provider list admitted under ``approved_cloud``.
+    An explicit endpoint on the entry (``base_url``/``api_base``/...) wins;
+    otherwise a provider class with a canonical SDK host contributes it.
+    Unknown providers contribute nothing (fail-closed, no wildcards).
+    """
+    models = _get(app_config, "models", None) or []
+    hosts: list[str] = []
+    for entry in models:
+        host: str | None = None
+        for attr in _MODEL_ENDPOINT_ATTRS:
+            host = _host_of(_get(entry, attr))
+            if host:
+                break
+        if host is None:
+            use = str(_get(entry, "use", "") or "").rsplit(":", 1)[-1].rsplit(".", 1)[-1]
+            if use == "ChatGoogleGenerativeAI" and _get(entry, "vertexai"):
+                location = str(_get(entry, "location", "") or "").strip()
+                if location:
+                    host = f"{location}-aiplatform.googleapis.com"
+            if host is None:
+                host = _PROVIDER_DEFAULT_HOSTS.get(use)
+        if host:
+            hosts.append(host)
+    return tuple(dict.fromkeys(hosts))
+
+
 def _model_endpoint_host(model: Any) -> str | None:
     """Best-effort provider endpoint hostname extraction from a chat model."""
     candidates: list[Any] = [model]
@@ -234,6 +319,9 @@ def _model_endpoint_host(model: Any) -> str | None:
                 raw = getattr(client, attr, None)
                 if raw:
                     candidates.append(raw)
+            raw = _provider_client_endpoint(client)
+            if raw:
+                candidates.append(raw)
     model_kwargs = getattr(model, "model_kwargs", None)
     if isinstance(model_kwargs, Mapping):
         for attr in ("base_url", "api_base", "openai_api_base"):
@@ -244,14 +332,9 @@ def _model_endpoint_host(model: Any) -> str | None:
     for raw in candidates:
         if raw is model:
             continue
-        text = str(raw).strip()
-        if not text:
-            continue
-        if "://" not in text:
-            text = "http://" + text
-        host = urlparse(text).hostname
+        host = _host_of(raw)
         if host:
-            return host.lower()
+            return host
     return None
 
 
@@ -282,9 +365,41 @@ def _deny_marker(message: Any) -> dict[str, Any] | None:
 class EgressPolicy:
     """Resolves and enforces per-tenant/run egress modes on every channel."""
 
-    def __init__(self, config: EgressConfig, *, kernel_url: str | None = None) -> None:
+    def __init__(
+        self,
+        config: EgressConfig,
+        *,
+        kernel_url: str | None = None,
+        tenant_id_getter: Callable[[], str | None] | None = None,
+    ) -> None:
         self.config = config
         self._kernel_url = kernel_url
+        self._tenant_id_getter = tenant_id_getter
+
+    def prepare_context(self, context: Mapping[str, Any] | None) -> MutableMapping[str, Any]:
+        """Apply server-authoritative EWCP keys to a run's runtime context.
+
+        Stamps ``ewcp_tenant_id`` with the configured deployment tenant so the
+        real tenant class drives classification (``resolve`` otherwise falls
+        back to ``user_id`` — an unclassified, sensitive identity). Drops the
+        ``_FORGED_CONTEXT_KEYS`` (``ewcp_egress_mode``, ``kernel``) — nothing
+        client-supplied may carry them, and no server producer reaches
+        runtime.context today. When no tenant is configured the key is
+        removed rather than trusted, so resolution fails closed.
+
+        Mutates a dict context in place (the live runtime view tools read);
+        immutable mappings get a stamped copy for the checks only.
+        """
+        if not isinstance(context, MutableMapping):
+            context = dict(context or {})
+        for key in _FORGED_CONTEXT_KEYS:
+            context.pop(key, None)
+        tenant = self._tenant_id_getter() if self._tenant_id_getter is not None else None
+        if tenant:
+            context[_CTX_TENANT_ID] = tenant
+        else:
+            context.pop(_CTX_TENANT_ID, None)
+        return context
 
     @classmethod
     def resolve_config(cls, plugin_config: Mapping[str, Any]) -> EgressConfig:
@@ -375,15 +490,19 @@ class EgressPolicy:
             return ChannelDecision(
                 False,
                 CHANNEL_MODEL,
-                f"tenant {policy.tenant_id!r}: model endpoint {host!r} not in allowed_model_endpoints (restricted)",
+                f"tenant {policy.tenant_id!r}: model endpoint {host!r} not in allowed_model_endpoints under restricted — denied",
             )
-        # approved_cloud
-        if _host_in_list(host, self.config.approved_model_endpoints):
+        # approved_cloud — admitted destinations are the operator-declared
+        # approved_model_endpoints unioned with the endpoints of the model
+        # providers configured in `models:` (server-side app_config; the
+        # config-driven provider list — never a wildcard).
+        approved = tuple(self.config.approved_model_endpoints) + _configured_model_hosts(context.get("app_config"))
+        if _host_in_list(host, approved):
             return ChannelDecision(True, CHANNEL_MODEL)
         return ChannelDecision(
             False,
             CHANNEL_MODEL,
-            f"tenant {policy.tenant_id!r}: model endpoint {host!r} not in approved_model_endpoints (approved_cloud)",
+            f"tenant {policy.tenant_id!r}: model endpoint {host!r} not in approved_model_endpoints / configured providers — denied",
         )
 
     def check_sandbox_net(self, context: Mapping[str, Any]) -> ChannelDecision:
@@ -564,12 +683,15 @@ class EgressPolicyMiddleware(AgentMiddleware):
         self.policy = policy
 
     async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        context = getattr(runtime, "context", None) or {}
+        # Stamps the deployment tenant into runtime.context (in place, so
+        # tools and later wraps classify on the same identity) and drops
+        # forged server-owned keys before the admission gate reads them.
+        context = self.policy.prepare_context(getattr(runtime, "context", None) or {})
         self.policy.enforce_run(context)
         return None
 
     async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-        context = getattr(getattr(request, "runtime", None), "context", None) or {}
+        context = self.policy.prepare_context(getattr(getattr(request, "runtime", None), "context", None) or {})
         decision = self.policy.check_model_call(getattr(request, "model", None), context)
         if not decision.allowed:
             return _denial_message(decision)
@@ -584,7 +706,7 @@ class EgressToolMiddleware(AgentMiddleware):
         self.policy = policy
 
     async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
-        context = getattr(getattr(request, "runtime", None), "context", None) or {}
+        context = self.policy.prepare_context(getattr(getattr(request, "runtime", None), "context", None) or {})
         tool_call = getattr(request, "tool_call", None) or {}
         decision = self.policy.check_tool_call(tool_call.get("name"), tool_call.get("args") or {}, context)
         if not decision.allowed:
