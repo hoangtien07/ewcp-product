@@ -57,7 +57,10 @@ class EwcpCoreService:
     def __init__(self, config: Mapping[str, Any] | None = None) -> None:
         self.config: Mapping[str, Any] = config or {}
         self._resolved = KernelClientConfig.resolve(self.config)
-        self.egress_policy = EgressPolicy(EgressPolicy.resolve_config(self.config))
+        self.egress_policy = EgressPolicy(
+            EgressPolicy.resolve_config(self.config),
+            kernel_url=self._resolved.kernel_url,
+        )
         self._model_policy = ModelPolicyConfig.resolve(self.config)
         self._client: KernelClient | None = None
         self._store: ExecutionRunStore | None = None
@@ -89,6 +92,21 @@ class EwcpCoreService:
         renders frontend decision buttons read-only and 409s the route.
         """
         return bool(self.config.get("decision_user_binding", True))
+
+    @property
+    def invoke_tenant_id(self) -> str | None:
+        """Tenant id stamped on capability invokes (`invoke.tenant_id`,
+        falling back to `budget.tenant_id`). Needed when the kernel runs
+        dev-mode auth (no API keys → declared tenant is required); under
+        tenant-key auth the kernel derives tenant from the key and this
+        field is ignored on mismatch (403 tenant_mismatch)."""
+        invoke = self.config.get("invoke")
+        if isinstance(invoke, Mapping) and invoke.get("tenant_id"):
+            return str(invoke["tenant_id"])
+        budget = self.config.get("budget")
+        if isinstance(budget, Mapping) and budget.get("tenant_id"):
+            return str(budget["tenant_id"])
+        return None
 
     def new_launcher(self, uploader: ThreadUploads | None = None) -> RunLauncher | None:
         """Per-request launcher: the shared store plus an uploads seam

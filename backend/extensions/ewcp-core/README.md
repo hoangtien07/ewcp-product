@@ -10,10 +10,21 @@ skeleton + `kernel_client.py` for the EWCP kernel reached **over HTTP**
 - `ewcp_core/kernel_client.py` — `KernelClient` (`httpx.AsyncClient`)
   covering the kernel's real wire surface:
   `POST /tasks`, `POST /workruns/{id}/decisions`, `GET /workruns/{id}`,
-  `GET /verify/{manifest_hash}`, `GET /outcomes`, and the budget
+  `GET /verify/{manifest_hash}`, `GET /outcomes`, the budget
   admission surface (A3 Task 5): `POST /budget/admissions`,
   `POST /budget/admissions/{id}/{settle,release}`,
-  `GET /budget/accounts/{execution_run_id}`.
+  `GET /budget/accounts/{execution_run_id}`, and the typed capability
+  contract (A5a Wave 2): `GET /outcomes/{type}` +
+  `POST /outcomes/{type}/run` with structured-error mapping
+  (`KernelInvokeError`: `error` code + `message` + `guidance`
+  ∈ {correct, retry, fatal}).
+- `ewcp_core/invoke_tools.py` — the agent-facing capability tools
+  `ewcp_capabilities` (list/fetch descriptors) and `ewcp_invoke`
+  (invoke a pack via the contract). Middleware-carried at STANDARD
+  placement; `execution_run_id` binds to the governed workrun, the
+  thread's ExecutionRunMap row, or the raw run_id (same precedence as
+  the budget-admission identity). File inputs resolve to this thread's
+  `uploads|workspace|outputs` dirs only.
 - `ewcp_core/plugin.py` — `EwcpCoreService` (owns the shared client +
   ExecutionRunMap launcher for the Gateway lifetime; contributes the
   budget middleware) + `GET /api/ewcp/_status`.
@@ -93,7 +104,12 @@ plugins:
         allowed_model_endpoints: []       # restricted: reachable model hosts
         approved_model_endpoints: []      # approved_cloud: reachable model hosts
         allowed_domains: []               # restricted: tool destinations (*.x.com ok)
+                                          #   ALSO covers the kernel_url host
+                                          #   for ewcp_invoke/ewcp_capabilities
         allowed_tools: []                 # restricted: operator-vouched egress tools
+      invoke:                             # optional — capability invoke
+        tenant_id: null                   # declared tenant for dev-mode kernels;
+                                          # falls back to budget.tenant_id
 ```
 
 **Env-first config:** `EWCP_KERNEL_URL` / `EWCP_KERNEL_API_KEY`
@@ -126,6 +142,10 @@ extensions/ewcp-core`. Restart Gateway after any mutation.
   duplicate WorkRun.
 - **`POST /workruns/{id}/decisions`**: never retried — the kernel
   exposes no idempotency contract on this endpoint.
+- **`POST /outcomes/{type}/run`**: retried on transient faults — the
+  call REQUIRES an `Idempotency-Key` (minted per logical invocation by
+  `ewcp_invoke` when the agent omits one), so retries replay the stored
+  run instead of double-dispatching.
 
 ## Egress policy (Task 4)
 
@@ -153,6 +173,14 @@ or allowlist+`approval: deny`), `approved_cloud` (endpoints must be in
 `sensitive` under `default_mode` (fail-closed). `non_sensitive` tenants
 — built-in `demo`/`default` plus `tenant_classes` — run unmodified,
 matching kernel `DataEgressPolicy` semantics.
+
+Kernel-bound tools: `ewcp_invoke` / `ewcp_capabilities` carry no `url`
+arg — their wire destination is the configured `kernel_url`. The tool
+channel authorizes that fixed destination per #37's semantics:
+`local_only` allows provably-local hosts (loopback/LAN literal, or a
+host explicitly declared in `allowed_domains`); `restricted` requires
+`allowed_domains` membership; an unconfigured kernel_url denies
+fail-closed.
 
 ## Status
 
