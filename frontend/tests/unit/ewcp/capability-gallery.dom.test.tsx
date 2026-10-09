@@ -27,7 +27,12 @@ const recon: OutcomeSpecView = {
 describe("CapabilityGallery", () => {
   test("renders one card per registered spec with VN labels + slots", () => {
     render(
-      <CapabilityGallery specs={[recon]} busy={false} onIntent={rs.fn()} />,
+      <CapabilityGallery
+        specs={[recon]}
+        busy={false}
+        onIntent={rs.fn()}
+        onGoverned={rs.fn()}
+      />,
     );
     expect(screen.getByText("Đối soát hóa đơn")).toBeTruthy();
     expect(screen.getByText(/Zip hóa đơn/)).toBeTruthy();
@@ -36,7 +41,12 @@ describe("CapabilityGallery", () => {
   test("starter-intent chips call onIntent", () => {
     const onIntent = rs.fn();
     render(
-      <CapabilityGallery specs={[recon]} busy={false} onIntent={onIntent} />,
+      <CapabilityGallery
+        specs={[recon]}
+        busy={false}
+        onIntent={onIntent}
+        onGoverned={rs.fn()}
+      />,
     );
     fireEvent.click(screen.getByText(/Kiểm tra hóa đơn đầu vào kỳ 09\/2025/));
     expect(onIntent).toHaveBeenCalledTimes(1);
@@ -44,7 +54,12 @@ describe("CapabilityGallery", () => {
 
   test("unregistered pack renders the disabled coming-soon card", () => {
     render(
-      <CapabilityGallery specs={[recon]} busy={false} onIntent={rs.fn()} />,
+      <CapabilityGallery
+        specs={[recon]}
+        busy={false}
+        onIntent={rs.fn()}
+        onGoverned={rs.fn()}
+      />,
     );
     expect(screen.getByText("Đối chiếu sao kê ngân hàng")).toBeTruthy();
     expect(screen.getByText(/Sắp có/)).toBeTruthy();
@@ -62,9 +77,25 @@ describe("CapabilityGallery", () => {
         specs={[recon, bank]}
         busy={false}
         onIntent={rs.fn()}
+        onGoverned={rs.fn()}
       />,
     );
     expect(screen.queryByText(/Sắp có/)).toBeNull();
+  });
+
+  test("Chạy governed button calls onGoverned with the card's spec", () => {
+    const onGoverned = rs.fn();
+    render(
+      <CapabilityGallery
+        specs={[recon]}
+        busy={false}
+        onIntent={rs.fn()}
+        onGoverned={onGoverned}
+      />,
+    );
+    fireEvent.click(screen.getByText("Chạy governed"));
+    expect(onGoverned).toHaveBeenCalledTimes(1);
+    expect(onGoverned.mock.calls[0]![0].outcome_type).toBe("invoice_recon");
   });
 
   test("fallback specs render when the registry is unreachable", () => {
@@ -73,6 +104,7 @@ describe("CapabilityGallery", () => {
         specs={FALLBACK_SPECS}
         busy={false}
         onIntent={rs.fn()}
+        onGoverned={rs.fn()}
       />,
     );
     expect(screen.getByText("Kiểm tra chứng từ")).toBeTruthy();

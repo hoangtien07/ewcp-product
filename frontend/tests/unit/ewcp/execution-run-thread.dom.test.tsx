@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, rs, test } from "@rstest/core";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
+import type { ExecutionRun } from "@/ewcp/api";
 import { ExecutionRunThread } from "@/ewcp/components/execution-run-thread";
 
 afterEach(() => {
@@ -8,7 +15,7 @@ afterEach(() => {
   rs.unstubAllGlobals();
 });
 
-const RUN = {
+const RUN: ExecutionRun = {
   execution_run_id: "er-1",
   thread_id: "t-1",
   run_id: "r-1",
@@ -43,12 +50,18 @@ const WORKRUN = {
   skipped: [],
 };
 
-function stubAll(binding: boolean) {
-  const calls: string[] = [];
+function stubAll(binding: boolean, run: typeof RUN = RUN) {
+  const calls: { url: string; body?: unknown }[] = [];
   rs.stubGlobal(
     "fetch",
-    rs.fn((u: string) => {
-      calls.push(u);
+    rs.fn((u: string, init?: RequestInit) => {
+      calls.push({
+        url: u,
+        body:
+          init?.body && typeof init.body === "string"
+            ? JSON.parse(init.body)
+            : init?.body,
+      });
       let body: unknown = {};
       if (u === "/api/ewcp/identity") {
         body = {
@@ -57,7 +70,9 @@ function stubAll(binding: boolean) {
           user_actor_binding: binding,
         };
       } else if (u === "/api/ewcp/runs/er-1") {
-        body = { run: RUN };
+        body = { run };
+      } else if (u === "/api/ewcp/runs/er-1/resume") {
+        body = run;
       } else if (u === "/api/ewcp/runs/er-1/workrun") {
         body = { workrun: WORKRUN };
       }
@@ -92,5 +107,34 @@ describe("ExecutionRunThread", () => {
     const approve = screen.getByText("Duyệt & niêm phong");
     expect(approve.getAttribute("disabled")).not.toBeNull();
     expect(screen.getByText(/Chỉ xem/)).toBeTruthy();
+  });
+  test("thread id renders as a link back to the chat lane", async () => {
+    stubAll(true);
+    const { container } = render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() =>
+      expect(screen.getByText(/thread t-1\.{0,3}/)).toBeTruthy(),
+    );
+    const link = container.querySelector('a[href="/workspace/chats/t-1"]');
+    expect(link).toBeTruthy();
+  });
+
+  test("pending_interrupt shows the resume box and posts the payload", async () => {
+    const calls = stubAll(true, {
+      ...RUN,
+      status: "pending_interrupt",
+      join_url: null,
+    });
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() =>
+      expect(screen.getByText(/đang chờ câu trả lời/)).toBeTruthy(),
+    );
+    fireEvent.change(screen.getByPlaceholderText(/Câu trả lời/), {
+      target: { value: '{"answer":"approve"}' },
+    });
+    fireEvent.click(screen.getByText("Tiếp tục"));
+    await waitFor(() => {
+      const resume = calls.find((c) => c.url.endsWith("/resume"));
+      expect(resume?.body).toEqual({ resume: { answer: "approve" } });
+    });
   });
 });

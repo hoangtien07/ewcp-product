@@ -5,6 +5,8 @@ import {
   joinRunStream,
   launchExecutionRun,
   listExecutionRuns,
+  listRunsForThread,
+  resumeRun,
   submitDecision,
   verifyPermalink,
   verifyShareUrl,
@@ -74,6 +76,53 @@ describe("ewcp api", () => {
     expect(fd.get("task_mode")).toBe("governed");
     expect(fd.get("idempotency_key")).toBe("k-9");
     expect(fd.getAll("files")).toHaveLength(1);
+  });
+
+  test("launchExecutionRun governed posts outcome_type + slot-named files", async () => {
+    const fetchMock = rs.fn((_u: string, _i?: RequestInit) =>
+      Promise.resolve(jsonResponse({ run: RUN, idempotent_replay: false })),
+    );
+    rs.stubGlobal("fetch", fetchMock);
+    await launchExecutionRun({
+      intent: "đối soát",
+      taskMode: "governed",
+      outcomeType: "invoice_recon",
+      fields: { mst: "0101" },
+      slotFiles: {
+        invoices_zip: [new File([new Uint8Array([1])], "inv.zip")],
+        books: [new File([new Uint8Array([2])], "s.csv")],
+      },
+    });
+    const fd = fetchMock.mock.calls[0]![1]!.body as FormData;
+    expect(fd.get("task_mode")).toBe("governed");
+    expect(fd.get("outcome_type")).toBe("invoice_recon");
+    expect(fd.get("mst")).toBe("0101");
+    expect((fd.get("invoices_zip") as File).name).toBe("inv.zip");
+    expect((fd.get("books") as File).name).toBe("s.csv");
+    expect(fd.get("files")).toBeNull(); // governed slots never thread-upload
+  });
+
+  test("listRunsForThread hits the thread_id filter", async () => {
+    const fetchMock = rs.fn((_u: string, _i?: RequestInit) =>
+      Promise.resolve(jsonResponse({ runs: [RUN] })),
+    );
+    rs.stubGlobal("fetch", fetchMock);
+    const runs = await listRunsForThread("t-1");
+    expect(fetchMock.mock.calls[0]![0]).toBe("/api/ewcp/runs?thread_id=t-1");
+    expect(runs).toEqual([RUN]);
+  });
+
+  test("resumeRun posts the resume payload as JSON", async () => {
+    const fetchMock = rs.fn((_u: string, _i?: RequestInit) =>
+      Promise.resolve(jsonResponse(RUN)),
+    );
+    rs.stubGlobal("fetch", fetchMock);
+    await resumeRun("er-1", { answer: "approve" });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/ewcp/runs/er-1/resume");
+    expect(JSON.parse(init!.body as string)).toEqual({
+      resume: { answer: "approve" },
+    });
   });
 
   test("submitDecision posts answer + decision_id as JSON", async () => {

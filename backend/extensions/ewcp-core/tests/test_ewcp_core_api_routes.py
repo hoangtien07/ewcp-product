@@ -42,12 +42,24 @@ class FakeStore:
     async def list_by_owner(self, created_by: str, *, limit: int = 50):
         return [r for r in self.records.values() if r.created_by == created_by]
 
+    async def get_by_idempotency_key(self, created_by: str, key: str):
+        return next(
+            (r for r in self.records.values() if r.created_by == created_by and r.idempotency_key == key),
+            None,
+        )
+
+    async def list_for_thread(self, thread_id: str, *, limit: int = 50):
+        return [r for r in self.records.values() if r.thread_id == thread_id]
+
 
 class FakeClient:
     """KernelClient shape — records calls, returns canned payloads."""
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.create_task_response: dict = {"workrun_id": "wr-new"}
+        self.create_task_replay = False
+        self.run_outcome_response: dict = {"workrun_id": "wr-new"}
 
     async def get_workrun(self, workrun_id):
         self.calls.append(("get_workrun", workrun_id))
@@ -82,6 +94,35 @@ class FakeClient:
     async def list_outcomes(self):
         return [{"outcome_type": "invoice_recon"}]
 
+    async def create_task(self, *, intent, tenant_id=None, fields=None, files=None, idempotency_key=None, timeout=None):
+        self.calls.append(
+            (
+                "create_task",
+                intent,
+                tenant_id,
+                dict(fields or {}),
+                {k: [m[0] for m in v] for k, v in (files or {}).items()},
+                idempotency_key,
+            )
+        )
+        run = dict(self.create_task_response)
+        return SimpleNamespace(
+            run=run,
+            idempotent_replay=self.create_task_replay,
+        )
+
+    async def run_outcome(self, outcome_type, *, tenant_id=None, fields=None, files=None, timeout=None):
+        self.calls.append(
+            (
+                "run_outcome",
+                outcome_type,
+                tenant_id,
+                dict(fields or {}),
+                {k: [m[0] for m in v] for k, v in (files or {}).items()},
+            )
+        )
+        return dict(self.run_outcome_response)
+
     async def verify_manifest(self, manifest_hash):
         return {"manifest": {"manifest_hash": manifest_hash}, "seal_ok": True, "workrun_id": "wr-1"}
 
@@ -98,7 +139,12 @@ class FakeLauncher:
 
     async def launch(self, **kwargs) -> LaunchOutcome:
         self.launch_calls.append(kwargs)
-        record = _record(thread_id="t-9", intent=kwargs["intent"], task_mode=kwargs["mode"])
+        record = _record(
+            thread_id="t-9",
+            intent=kwargs["intent"],
+            task_mode=kwargs["mode"],
+            workrun_id=kwargs.get("workrun_id") or "wr-1",
+        )
         return LaunchOutcome(record=record, run=None, idempotent_replay=False)
 
 
@@ -126,12 +172,13 @@ class FakeRecovery:
 
 
 class FakeService:
-    def __init__(self, *, records=None, client=None, binding=True, launcher=None) -> None:
+    def __init__(self, *, records=None, client=None, binding=True, launcher=None, config=None) -> None:
         self._store = FakeStore(records)
         self.client = client
         self._binding = binding
         self._launcher = launcher
         self._recovery = FakeRecovery(self._store)
+        self.config: dict = dict(config or {})
 
     @property
     def store(self):
@@ -340,3 +387,172 @@ def test_launch_run_validates_intent():
 
     c = TestClient(_app(service, agent_runs=_Runs()))
     assert c.post("/api/ewcp/runs", data={"intent": "  "}).status_code == 422
+
+
+# -- governed launch: kernel-first intake (A6 gap #1) -------------------------
+
+
+class _Runs:
+    def for_plugin(self, ns):
+        return self
+
+
+def test_governed_launch_dispatches_via_create_task_and_binds_workrun():
+    client = FakeClient()
+    launcher = FakeLauncher()
+    service = FakeService(client=client, launcher=launcher)
+    c = TestClient(_app(service, agent_runs=_Runs()))
+
+    r = c.post(
+        "/api/ewcp/runs",
+        data={
+            "intent": "đối soát Q4",
+            "task_mode": "governed",
+            "idempotency_key": "k-1",
+            "mst": "0101",
+        },
+        files=[("invoices_zip", ("inv.zip", b"PKfake", "application/zip"))],
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["run"]["workrun_id"] == "wr-new"
+    assert body["run"]["task_mode"] == "governed"
+
+    call = client.calls[0]
+    assert call[0] == "create_task"
+    assert call[1] == "đối soát Q4"
+    assert call[3] == {"mst": "0101"}
+    assert call[4] == {"invoices_zip": ["inv.zip"]}
+    assert call[5] == "k-1"
+
+    launch = launcher.launch_calls[0]
+    assert launch["mode"] == "governed"
+    assert launch["workrun_id"] == "wr-new"
+    assert launch["context"] == {"kernel": {"workrun_id": "wr-new"}}
+    assert launch["files"] == []
+    assert launch["idempotency_key"] == "k-1"
+
+
+def test_governed_launch_with_outcome_type_dispatches_run_outcome():
+    client = FakeClient()
+    launcher = FakeLauncher()
+    service = FakeService(client=client, launcher=launcher, config={"tenant_id": "demo"})
+    c = TestClient(_app(service, agent_runs=_Runs()))
+
+    r = c.post(
+        "/api/ewcp/runs",
+        data={
+            "intent": "đối soát",
+            "task_mode": "governed",
+            "outcome_type": "invoice_recon",
+        },
+        files=[("invoices_zip", ("inv.zip", b"PKfake", "application/zip"))],
+    )
+    assert r.status_code == 200
+
+    call = client.calls[0]
+    assert call[0] == "run_outcome"
+    assert call[1] == "invoice_recon"
+    assert call[2] == "demo"
+    assert call[4] == {"invoices_zip": ["inv.zip"]}
+    assert launcher.launch_calls[0]["workrun_id"] == "wr-new"
+
+
+def test_governed_launch_form_tenant_beats_config():
+    client = FakeClient()
+    service = FakeService(client=client, launcher=FakeLauncher(), config={"tenant_id": "demo"})
+    c = TestClient(_app(service, agent_runs=_Runs()))
+
+    r = c.post(
+        "/api/ewcp/runs",
+        data={"intent": "x", "task_mode": "governed", "tenant_id": "acme"},
+    )
+    assert r.status_code == 200
+    assert client.calls[0][2] == "acme"
+
+
+def test_governed_launch_clarify_returns_422_and_spawns_nothing():
+    client = FakeClient()
+    client.create_task_response = {"status": "clarify", "clarify_question": "Loại hóa đơn nào?"}
+    launcher = FakeLauncher()
+    service = FakeService(client=client, launcher=launcher)
+    c = TestClient(_app(service, agent_runs=_Runs()))
+
+    r = c.post("/api/ewcp/runs", data={"intent": "mơ hồ", "task_mode": "governed"})
+    assert r.status_code == 422
+    assert "Loại hóa đơn nào?" in r.text
+    assert launcher.launch_calls == []
+
+
+def test_governed_launch_replays_on_same_idempotency_key_without_kernel_call():
+    client = FakeClient()
+    launcher = FakeLauncher()
+    existing = _record(key="k-9", intent="đối soát", task_mode="governed", workrun_id="wr-old")
+    service = FakeService(records=[existing], client=client, launcher=launcher)
+    c = TestClient(_app(service, agent_runs=_Runs()))
+
+    r = c.post(
+        "/api/ewcp/runs",
+        data={"intent": "đối soát", "task_mode": "governed", "idempotency_key": "k-9"},
+    )
+    assert r.status_code == 200
+    assert r.json()["idempotent_replay"] is True
+    assert r.json()["run"]["workrun_id"] == "wr-old"
+    assert client.calls == []
+    assert launcher.launch_calls == []
+
+
+def test_governed_launch_conflicting_idempotency_key_returns_409():
+    client = FakeClient()
+    service = FakeService(
+        records=[_record(key="k-9", intent="khác", task_mode="governed")],
+        client=client,
+        launcher=FakeLauncher(),
+    )
+    c = TestClient(_app(service, agent_runs=_Runs()))
+
+    r = c.post(
+        "/api/ewcp/runs",
+        data={"intent": "đối soát", "task_mode": "governed", "idempotency_key": "k-9"},
+    )
+    assert r.status_code == 409
+    assert client.calls == []
+
+
+def test_governed_launch_with_bound_workrun_skips_kernel_intake():
+    client = FakeClient()
+    launcher = FakeLauncher()
+    service = FakeService(client=client, launcher=launcher)
+    c = TestClient(_app(service, agent_runs=_Runs()))
+
+    r = c.post(
+        "/api/ewcp/runs",
+        data={"intent": "đối soát", "task_mode": "governed", "workrun_id": "wr-ext"},
+    )
+    assert r.status_code == 200
+    assert client.calls == []
+    launch = launcher.launch_calls[0]
+    assert launch["workrun_id"] == "wr-ext"
+    assert launch["context"] is None
+
+
+def test_governed_launch_requires_configured_kernel():
+    service = FakeService(client=None, launcher=FakeLauncher())
+    c = TestClient(_app(service, agent_runs=_Runs()))
+    r = c.post("/api/ewcp/runs", data={"intent": "x", "task_mode": "governed"})
+    assert r.status_code == 503
+
+
+def test_list_runs_filters_by_thread_and_owner_scope():
+    mine = _record(thread_id="t-1", task_mode="governed")
+    other_thread = _record(thread_id="t-2")
+    other_owner = _record(thread_id="t-1", created_by="u-2")
+    service = FakeService(records=[mine, other_thread, other_owner])
+    c = TestClient(_app(service))
+
+    r = c.get("/api/ewcp/runs", params={"thread_id": "t-1"})
+    assert r.status_code == 200
+    runs = r.json()["runs"]
+    assert len(runs) == 1
+    assert runs[0]["thread_id"] == "t-1"
+    assert runs[0]["created_by"] == "u-1"

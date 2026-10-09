@@ -23,6 +23,7 @@ the frontend renders decisions read-only.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -31,6 +32,7 @@ from pydantic import BaseModel, Field
 from starlette.datastructures import UploadFile
 
 from .run_launcher import (
+    EWCP_RUNS_NAMESPACE,
     FilePayload,
     FilesWithoutUploader,
     HttpThreadUploads,
@@ -50,6 +52,22 @@ logger = logging.getLogger(__name__)
 _FORWARDED_AUTH_HEADERS = ("cookie", "authorization", "x-csrf-token")
 
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+# Form fields the launch route consumes itself — every other PLAIN form
+# field on a governed intake is a spec context key (mst, ky…) forwarded
+# to the kernel verbatim; every other FILE field is an input slot
+# (invoices_zip, books…).
+_LAUNCH_FORM_FIELDS = frozenset(
+    {
+        "intent",
+        "task_mode",
+        "workrun_id",
+        "idempotency_key",
+        "outcome_type",
+        "tenant_id",
+        "files",
+    }
+)
 
 
 def _user_id(request: Request) -> str:
@@ -162,7 +180,21 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
         """Launch an ExecutionRun: product thread + run via the request's
         bound AgentRuns grant, projected into the ExecutionRunMap.
         Multipart: `intent` (required), `task_mode` (general|governed),
-        `workrun_id`, `idempotency_key`, `files` (repeatable)."""
+        `workrun_id`, `idempotency_key`, `outcome_type`, `tenant_id`,
+        `files` (repeatable thread attachments for `general`) plus, for
+        `governed`, any file field whose name is a spec input slot
+        (`invoices_zip`, `books`, …) and any plain field treated as a
+        spec context key.
+
+        Governed ordering is kernel-first: dispatch the pack pipeline via
+        `POST /tasks` (router intake, kernel-deduped on Idempotency-Key)
+        or `POST /outcomes/{type}/run` (explicit pack — no kernel replay
+        contract, so the ExecutionRunMap row dedupes retries) BEFORE the
+        product thread exists — an intake 422 or clarify never leaves an
+        orphan thread behind. The returned `workrun_id` then rides the
+        normal launch path, which writes the map row already bound and
+        stamps `context.kernel.workrun_id` for budget admission
+        identity (A3 §Identity)."""
         from deerflow_extension_api.agent_runs import AgentRunError, resolve_agent_runs
 
         uid = _user_id(request)
@@ -181,18 +213,81 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
         intent = _field("intent")
         if intent is None or not intent.strip():
             raise HTTPException(422, "intent is required")
-        files = [
-            FilePayload(
-                filename=f.filename or "upload",
-                body=await f.read(),
-                content_type=f.content_type or "application/octet-stream",
+        task_mode = _field("task_mode") or "general"
+        idempotency_key = _field("idempotency_key")
+        workrun_id = _field("workrun_id")
+
+        uploads_by_field: dict[str, list[FilePayload]] = {}
+        for key, item in form.multi_items():
+            if not isinstance(item, UploadFile):
+                continue
+            payload = FilePayload(
+                filename=item.filename or "upload",
+                body=await item.read(),
+                content_type=item.content_type or "application/octet-stream",
             )
-            for f in form.getlist("files")
-            if isinstance(f, UploadFile)
-        ]
-        for f in files:
-            if len(f.body) > _MAX_UPLOAD_BYTES:
-                raise HTTPException(413, f"file {f.filename!r} exceeds {_MAX_UPLOAD_BYTES} bytes")
+            uploads_by_field.setdefault(key, []).append(payload)
+        for payloads in uploads_by_field.values():
+            for f in payloads:
+                if len(f.body) > _MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, f"file {f.filename!r} exceeds {_MAX_UPLOAD_BYTES} bytes")
+
+        context: dict[str, Any] | None = None
+        if task_mode == "governed" and workrun_id is None:
+            # Kernel-first governed intake: the workrun is created (and
+            # the pack pipeline dispatched, synchronously) before any
+            # product thread/run exists.
+            client = _require_client(service)
+            key = idempotency_key or f"{EWCP_RUNS_NAMESPACE}:{uuid.uuid4().hex}"
+            idempotency_key = key
+            store = service.store
+            existing = await store.get_by_idempotency_key(uid, key) if store is not None else None
+            if existing is not None:
+                if existing.intent != intent or existing.task_mode != task_mode:
+                    raise HTTPException(409, "idempotency key already used for a different launch")
+                if existing.workrun_id:
+                    # Product-level replay: never reach the kernel twice
+                    # for the same owner+key — this is what makes the
+                    # (idempotency-free) /outcomes run contract safe to
+                    # retry from the UI.
+                    return {"run": _record_view(existing), "idempotent_replay": True}
+            tenant_id = _field("tenant_id") or service.config.get("tenant_id")
+            context_fields = {name: value for name, value in form.multi_items() if isinstance(value, str) and name not in _LAUNCH_FORM_FIELDS}
+            kernel_files = {slot: [(f.filename, f.body, f.content_type) for f in payloads] for slot, payloads in uploads_by_field.items()}
+            timeout = float(service.config.get("intake_timeout_seconds") or 180.0)
+            try:
+                outcome_type = _field("outcome_type")
+                if outcome_type:
+                    run_view = await client.run_outcome(
+                        outcome_type,
+                        tenant_id=tenant_id,
+                        fields=context_fields,
+                        files=kernel_files,
+                        timeout=timeout,
+                    )
+                else:
+                    submitted = await client.create_task(
+                        intent=intent,
+                        tenant_id=tenant_id,
+                        fields=context_fields,
+                        files=kernel_files,
+                        idempotency_key=key,
+                        timeout=timeout,
+                    )
+                    run_view = submitted.run
+            except Exception as exc:
+                raise _kernel_error(exc) from exc
+            workrun_id = run_view.get("workrun_id")
+            if not workrun_id:
+                # Router clarify: no run was created — surface the
+                # kernel's question so the user can refine the intent.
+                detail = run_view.get("clarify_question") or "kernel could not route the intent to an outcome"
+                raise HTTPException(422, detail)
+            context = {"kernel": {"workrun_id": workrun_id}}
+
+        # Governed uploads were already delivered to the kernel under
+        # their slot names — they do not double as thread attachments.
+        files = [] if task_mode == "governed" else uploads_by_field.get("files", [])
         uploader_client: httpx.AsyncClient | None = None
         if files:
             uploader_client = _request_scoped_uploader(request)
@@ -202,11 +297,12 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
             outcome = await launcher.launch(
                 agent_runs=agent_runs,
                 intent=intent,
-                mode=_field("task_mode") or "general",
+                mode=task_mode,
                 created_by=uid,
                 files=files,
-                idempotency_key=_field("idempotency_key"),
-                workrun_id=_field("workrun_id"),
+                idempotency_key=idempotency_key,
+                workrun_id=workrun_id,
+                context=context,
             )
         except LaunchConflict as exc:
             raise HTTPException(409, str(exc)) from exc

@@ -200,12 +200,25 @@ def build_router(service: EwcpCoreService) -> APIRouter:
         return service.status()
 
     @router.get("/runs")
-    async def recover_runs(request: Request) -> dict[str, Any]:
+    async def recover_runs(request: Request, thread_id: str | None = None) -> dict[str, Any]:
         """Foreground recovery: reconcile the caller's ExecutionRunMap rows
-        against live thread truth and return the projection."""
+        against live thread truth and return the projection.
+
+        `?thread_id=` is the chat-page reverse lookup ("which execution
+        runs ride this thread?") — a map-store read only: the badge needs
+        ids/status, so the foreground reconcile is skipped and the shape
+        shrinks to the plain record view."""
         principal = resolve_principal(request)
         if principal is None:
             raise HTTPException(401, "Authentication required")
+        if thread_id is not None:
+            if service.store is None:
+                raise HTTPException(503, "execution run store is not started")
+            records = await service.store.list_for_thread(thread_id)
+            return {
+                "owner": principal.user_id,
+                "runs": [_record_view(r) for r in records if r.created_by == principal.user_id],
+            }
         runs = _bound_runs_or_503(request)
         try:
             report = await _recovery_or_503(service).recover(agent_runs=runs, created_by=principal.user_id)
