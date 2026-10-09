@@ -163,6 +163,17 @@ export function ExecutionRunThread({
     workrun?.status !== "awaiting_approval" &&
     workrun?.status !== "candidate_complete";
 
+  // candidate_complete/awaiting_approval is the final human gate: the
+  // kernel accepts an approval POST with decision_id null even when the
+  // run view carries no pending question (a clean governed run emits
+  // none — see docs/vnext/A6_BROWSER_E2E.md). Synthesize the card so the
+  // seal path stays reachable from this surface; an emitted approval
+  // question still wins when one exists.
+  const showApprovalGate =
+    (workrun?.status === "candidate_complete" ||
+      workrun?.status === "awaiting_approval") &&
+    !pending.some((q) => q.kind === "approval");
+
   return (
     <div className="space-y-4">
       <header className="border-border bg-card rounded-lg border p-4">
@@ -255,7 +266,7 @@ export function ExecutionRunThread({
           </p>
           {pending.map((q) => (
             <DecisionCard
-              key={q.decision_id}
+              key={q.decision_id ?? q.kind}
               q={q}
               executionRunId={run.execution_run_id}
               run={workrun}
@@ -268,6 +279,21 @@ export function ExecutionRunThread({
               onDone={setWorkrun}
             />
           ))}
+          {showApprovalGate && (
+            <DecisionCard
+              q={{
+                decision_id: null,
+                kind: "approval",
+                prompt:
+                  "Agent đã hoàn tất — duyệt để niêm phong kết quả (manifest + seal).",
+                options: ["approve", "reject"],
+              }}
+              executionRunId={run.execution_run_id}
+              run={workrun}
+              canDecide={canDecide}
+              onDone={setWorkrun}
+            />
+          )}
           {workrun.deliverables.length > 0 && (
             <ul className="space-y-1">
               {workrun.deliverables.map((d) => (

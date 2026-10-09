@@ -50,7 +50,11 @@ const WORKRUN = {
   skipped: [],
 };
 
-function stubAll(binding: boolean, run: typeof RUN = RUN) {
+function stubAll(
+  binding: boolean,
+  run: typeof RUN = RUN,
+  workrun: typeof WORKRUN = WORKRUN,
+) {
   const calls: { url: string; body?: unknown }[] = [];
   rs.stubGlobal(
     "fetch",
@@ -74,7 +78,10 @@ function stubAll(binding: boolean, run: typeof RUN = RUN) {
       } else if (u === "/api/ewcp/runs/er-1/resume") {
         body = run;
       } else if (u === "/api/ewcp/runs/er-1/workrun") {
-        body = { workrun: WORKRUN };
+        body = { workrun };
+      } else if (u === "/api/ewcp/runs/er-1/decisions") {
+        // the kernel decision POST returns the workrun run-view itself
+        body = workrun;
       }
       return Promise.resolve(
         new Response(JSON.stringify(body), {
@@ -116,6 +123,47 @@ describe("ExecutionRunThread", () => {
     );
     const link = container.querySelector('a[href="/workspace/chats/t-1"]');
     expect(link).toBeTruthy();
+  });
+
+  test("clean candidate_complete renders a seal approval gate (decision_id null)", async () => {
+    const calls = stubAll(true, RUN, {
+      ...WORKRUN,
+      status: "candidate_complete",
+      pending_questions: [],
+    });
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() =>
+      expect(screen.getByText("Duyệt & niêm phong")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByText("Duyệt & niêm phong"));
+    await waitFor(() => {
+      const decision = calls.find((c) => c.url.endsWith("/decisions"));
+      expect(decision?.body).toEqual({
+        answer: "approve",
+        decision_id: null,
+      });
+    });
+  });
+
+  test("an emitted approval question wins over the synthesized gate", async () => {
+    const calls = stubAll(true, RUN, {
+      ...WORKRUN,
+      status: "candidate_complete",
+    });
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() =>
+      expect(screen.getByText("Duyệt kết quả?")).toBeTruthy(),
+    );
+    // the emitted question's own prompt renders; no duplicate gate card
+    expect(screen.queryByText(/niêm phong kết quả \(manifest/)).toBeNull();
+    fireEvent.click(screen.getByText("Duyệt & niêm phong"));
+    await waitFor(() => {
+      const decision = calls.find((c) => c.url.endsWith("/decisions"));
+      expect(decision?.body).toEqual({
+        answer: "approve",
+        decision_id: "d-1",
+      });
+    });
   });
 
   test("pending_interrupt shows the resume box and posts the payload", async () => {
