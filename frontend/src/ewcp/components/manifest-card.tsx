@@ -10,7 +10,7 @@ import { getManifest, type RunView } from "@/ewcp/api";
 import { decisionLabel } from "@/ewcp/labels";
 
 import { ShareVerifyLink } from "./share-verify-link";
-import { VerifiedSealBadge } from "./unverified-badge";
+import { VerifiedSealBadge } from "./verified-seal-badge";
 
 interface ManifestCheck {
   name?: string;
@@ -53,10 +53,10 @@ export function ManifestCard({
   // never show the seal before the manifest actually loaded — a verified
   // badge with a placeholder hash presents unavailable evidence as sealed
   if (err) {
-    return <p className="text-xs text-red-600">{err}</p>;
+    return <p className="text-xs text-destructive">{err}</p>;
   }
   if (!manifest) {
-    return <p className="text-xs text-zinc-500">Đang tải manifest…</p>;
+    return <p className="text-xs text-muted-foreground">Đang tải manifest…</p>;
   }
 
   const checks = (manifest.checks as ManifestCheck[] | undefined) ?? [];
@@ -70,14 +70,16 @@ export function ManifestCard({
     <div className="space-y-3">
       <VerifiedSealBadge manifestHash={hash} />
       {checks.length > 0 && (
-        <div className="rounded-lg border border-zinc-300 bg-white p-3 text-xs dark:border-zinc-700 dark:bg-zinc-900">
+        <div className="rounded-lg border border-border bg-card p-3 text-xs">
           <div className="mb-2 font-semibold">Validator checks</div>
           <ul className="space-y-1">
             {checks.map((c, i) => (
               <li key={i} className="flex gap-2">
                 <span
                   className={
-                    c.result === "PASS" ? "text-emerald-600" : "text-red-600"
+                    c.result === "PASS"
+                      ? "text-emerald-600"
+                      : "text-destructive"
                   }
                 >
                   {c.result ?? "?"}
@@ -85,7 +87,9 @@ export function ManifestCard({
                 <span className="flex-1">
                   <span className="font-mono">{c.name}</span>
                   {c.detail && (
-                    <span className="text-zinc-500"> — {c.detail}</span>
+                    <span className="text-muted-foreground">
+                      {" "}— {c.detail}
+                    </span>
                   )}
                 </span>
               </li>
@@ -94,7 +98,7 @@ export function ManifestCard({
         </div>
       )}
       {run.decision && (
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-muted-foreground">
           Quyết định: <b>{decisionLabel(run.decision.answer)}</b> bởi{" "}
           {run.decision.decided_by}
         </p>
@@ -105,7 +109,7 @@ export function ManifestCard({
         <>
           <a
             href={`/verify/${encodeURIComponent(hash)}`}
-            className="inline-block text-xs font-medium text-blue-600 underline"
+            className="inline-block text-xs font-medium text-primary underline"
           >
             Mở trang verify — khách tự kiểm chứng →
           </a>

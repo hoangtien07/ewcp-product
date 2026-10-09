@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { submitDecision, type PendingQuestion, type RunView } from "@/ewcp/api";
 import { decisionLabel } from "@/ewcp/labels";
 
@@ -90,27 +91,33 @@ export function DecisionCard({
   }
 
   return (
-    <div className="rounded-lg border border-zinc-300 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-      <div className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         {KIND_LABEL[q.kind] ?? q.kind}
       </div>
       <p className="mt-1 text-sm whitespace-pre-wrap">{q.prompt}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {options.map((opt) => (
-          <button
+          <Button
             key={opt.id}
+            size="sm"
+            variant={
+              opt.id === "approve" || opt.id === "approve_contract"
+                ? "default"
+                : opt.id === "reject"
+                  ? "destructive"
+                  : "secondary"
+            }
             disabled={busy !== null || inert}
             onClick={() => void submit(opt.id)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+            className={
               opt.id === "approve" || opt.id === "approve_contract"
                 ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                : opt.id === "reject"
-                  ? "bg-red-600 text-white hover:bg-red-700"
-                  : "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-            }`}
+                : undefined
+            }
           >
             {busy === opt.id ? "…" : decisionLabel(opt.label)}
-          </button>
+          </Button>
         ))}
       </div>
       {!canDecide && (
@@ -123,7 +130,7 @@ export function DecisionCard({
           {disabledHint}
         </p>
       )}
-      {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
+      {err && <p className="mt-2 text-xs text-destructive">{err}</p>}
     </div>
   );
 }

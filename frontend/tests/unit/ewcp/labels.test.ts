@@ -4,6 +4,9 @@ import {
   DECISION_LABEL,
   decisionLabel,
   formatCounts,
+  LIFECYCLE_LABEL,
+  lifecycleLabel,
+  lifecycleStatus,
   outcomeLabel,
   RECON_STATUS_LABEL,
   reconStatusLabel,
@@ -14,6 +17,8 @@ import {
   threeWayFlagLabel,
   threeWayStatusLabel,
 } from "@/ewcp/labels";
+
+import { GOVERNED_EXECUTION_RUN, VERIFIED_RUN_VIEW } from "./fixtures";
 
 describe("ewcp labels — kernel enum → Vietnamese", () => {
   test("approval answers map to the kernel static-UI vocabulary", () => {
@@ -154,5 +159,84 @@ describe("ewcp labels — kernel enum → Vietnamese", () => {
     expect(reconStatusLabel("OTHER")).toBe("OTHER");
     expect(threeWayStatusLabel("OTHER")).toBe("OTHER");
     expect(threeWayFlagLabel("future_flag")).toBe("future_flag");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WP-A6 unified lifecycle vocabulary — one status story per run over the
+// launcher enum (ExecutionRun.status) and kernel truth (RunView.status +
+// RunView.decision). Mapping: docs/vnext/A6_UX_MAP.md item #8.
+// ---------------------------------------------------------------------------
+describe("lifecycleStatus — WP-A6 unified status vocabulary", () => {
+  test("the workrun's kernel truth wins over the launcher status", () => {
+    // a bound run: launcher says completed, kernel says verified
+    expect(lifecycleStatus(GOVERNED_EXECUTION_RUN, VERIFIED_RUN_VIEW)).toBe(
+      "verified",
+    );
+  });
+
+  test("kernel statuses project onto the WP-A6 set", () => {
+    const run = GOVERNED_EXECUTION_RUN;
+    const wr = (status: string, decision?: { answer: string }) =>
+      ({ ...VERIFIED_RUN_VIEW, status, decision }) as typeof VERIFIED_RUN_VIEW;
+
+    // in-flight and ask-back states are all "accepted" — the work is
+    // taken on, no checkpoint claimed yet ("interrupted" is resumable,
+    // not terminal, so it stays in-flight too)
+    for (const s of ["received", "running", "awaiting_input", "interrupted"]) {
+      expect(lifecycleStatus(run, wr(s)), s).toBe("accepted");
+    }
+    // candidate_complete + awaiting_approval: the agent's part is done
+    expect(lifecycleStatus(run, wr("candidate_complete"))).toBe(
+      "agent_finished",
+    );
+    expect(lifecycleStatus(run, wr("awaiting_approval"))).toBe(
+      "agent_finished",
+    );
+    // a decided approve_contract upgrades mid-flight work to the write lane
+    expect(
+      lifecycleStatus(run, wr("running", { answer: "approve_contract" })),
+    ).toBe("approved_to_act");
+    expect(lifecycleStatus(run, wr("approved_to_act"))).toBe(
+      "approved_to_act",
+    );
+    expect(lifecycleStatus(run, wr("external_executed"))).toBe(
+      "external_executed",
+    );
+    // terminal failures claim no checkpoint — UNKNOWN, not a guess
+    for (const s of ["failed", "cancelled"]) {
+      expect(lifecycleStatus(run, wr(s)), s).toBe("UNKNOWN");
+    }
+  });
+
+  test("unbound runs project from the launcher record alone", () => {
+    const run = (status: string) =>
+      ({ ...GOVERNED_EXECUTION_RUN, status }) as typeof GOVERNED_EXECUTION_RUN;
+    expect(lifecycleStatus(run("running"), null)).toBe("accepted");
+    expect(lifecycleStatus(run("launching"), null)).toBe("accepted");
+    expect(lifecycleStatus(run("pending_interrupt"), null)).toBe("accepted");
+    expect(lifecycleStatus(run("completed"), null)).toBe("agent_finished");
+    // no kernel view → a failed/unrecognized launcher state is UNKNOWN
+    expect(lifecycleStatus(run("failed"), null)).toBe("UNKNOWN");
+    expect(lifecycleStatus(run("bogus_future"), null)).toBe("UNKNOWN");
+  });
+
+  test("no run view at all is UNKNOWN", () => {
+    expect(lifecycleStatus({ status: "completed" }, null)).toBe(
+      "agent_finished",
+    );
+    expect(
+      lifecycleStatus({ status: "completed" } as never, undefined),
+    ).toBe("agent_finished");
+  });
+
+  test("every lifecycle token has a Vietnamese label", () => {
+    for (const [k, v] of Object.entries(LIFECYCLE_LABEL)) {
+      expect(v, `missing label for ${k}`).toBeTruthy();
+    }
+    expect(
+      lifecycleLabel(GOVERNED_EXECUTION_RUN, VERIFIED_RUN_VIEW),
+    ).toBe("Đã niêm phong");
+    expect(lifecycleLabel({ status: "running" })).toBe("Đã tiếp nhận");
   });
 });

@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { verifyShareUrl } from "@/ewcp/api";
 
 type CopyState = "idle" | "copied" | "failed";
@@ -54,22 +55,24 @@ export function ShareVerifyLink({ manifestHash }: { manifestHash: string }) {
 
   return (
     <div className="space-y-1">
-      <button
+      <Button
+        size="sm"
+        variant={state === "copied" ? "default" : "secondary"}
         onClick={copy}
-        className={`rounded-md px-3 py-1.5 text-xs font-medium ${
+        className={
           state === "copied"
-            ? "bg-emerald-600 text-white"
-            : "bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600"
-        }`}
+            ? "bg-emerald-600 text-white hover:bg-emerald-700"
+            : undefined
+        }
       >
         {state === "copied" ? "Đã copy link" : "Chia sẻ link xác minh"}
-      </button>
-      <p className="text-xs text-zinc-500">
+      </Button>
+      <p className="text-xs text-muted-foreground">
         Người nhận mở link này tra cứu bằng chứng niêm phong — không cần API
         key.
       </p>
       {state === "failed" && (
-        <p className="font-mono text-xs break-all text-zinc-500">
+        <p className="font-mono text-xs break-all text-muted-foreground">
           Copy thủ công: {url}
         </p>
       )}

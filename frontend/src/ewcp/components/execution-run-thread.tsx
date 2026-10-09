@@ -9,6 +9,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   downloadDeliverable,
   getExecutionRun,
@@ -20,10 +22,10 @@ import {
   type RunView,
   type RunStreamEvent,
 } from "@/ewcp/api";
-import { statusLabel } from "@/ewcp/labels";
+import { lifecycleStatus, statusLabel } from "@/ewcp/labels";
 
 import { DecisionCard } from "./decision-card";
-import { runStatusLabel } from "./execution-run-card";
+import { LifecycleBadge } from "./lifecycle-badge";
 import { ManifestCard } from "./manifest-card";
 import { StudioCard } from "./studio-card";
 
@@ -151,7 +153,11 @@ export function ExecutionRunThread({
   }, [run, resumeText, resuming]);
 
   if (!run)
-    return <p className="text-xs text-zinc-500">{err ?? "Đang tải run…"}</p>;
+    return (
+      <p className="text-xs text-muted-foreground">
+        {err ?? "Đang tải run…"}
+      </p>
+    );
 
   const pending = workrun?.pending_questions ?? [];
   const approvalGateOpen =
@@ -161,27 +167,30 @@ export function ExecutionRunThread({
 
   return (
     <div className="space-y-4">
-      <header className="rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
+      <header className="rounded-lg border border-border bg-card p-4">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">
-            {runStatusLabel(run.status)}
+          {/* the WP-A6 lifecycle claim — one vocabulary over the launcher
+              and kernel enums; the raw kernel sub-state stays below as a
+              detail annotation */}
+          <h2 className="flex items-center text-sm font-semibold">
+            <LifecycleBadge status={lifecycleStatus(run, workrun)} />
             {streaming && (
-              <span className="ml-2 text-[10px] font-normal text-zinc-400">
+              <span className="ml-2 text-[10px] font-normal text-muted-foreground">
                 · live
               </span>
             )}
           </h2>
-          <span className="text-[10px] text-zinc-400">
+          <span className="text-[10px] text-muted-foreground">
             {run.task_mode}
             {run.workrun_id && ` · wr:${run.workrun_id.slice(0, 8)}…`}
           </span>
         </div>
         <p className="mt-1 text-sm whitespace-pre-wrap">{run.intent}</p>
-        <p className="mt-1 font-mono text-[10px] text-zinc-400">
+        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
           {run.execution_run_id} ·{" "}
           <Link
             href={`/workspace/chats/${encodeURIComponent(run.thread_id)}`}
-            className="text-blue-500 underline"
+            className="text-primary underline"
             title={run.thread_id}
           >
             thread {run.thread_id.slice(0, 8)}…
@@ -190,42 +199,40 @@ export function ExecutionRunThread({
         </p>
       </header>
 
-      {err && <p className="text-xs text-red-600">{err}</p>}
+      {err && <p className="text-xs text-destructive">{err}</p>}
 
       {run.status === "pending_interrupt" && (
         <section className="space-y-2 rounded-lg border border-amber-300 bg-amber-50/60 p-4 dark:border-amber-800 dark:bg-amber-950/30">
           <h3 className="text-xs font-semibold text-amber-700 dark:text-amber-300">
             Run đang chờ câu trả lời (interrupt)
           </h3>
-          <textarea
+          <Textarea
             value={resumeText}
             onChange={(e) => setResumeText(e.target.value)}
             rows={2}
             placeholder="Câu trả lời — text thuần hoặc JSON theo contract của interrupt"
-            className="w-full rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 text-sm dark:border-zinc-600"
           />
-          <button
+          <Button
             type="button"
+            size="sm"
             disabled={resuming || !resumeText.trim()}
             onClick={() => void submitResume()}
-            className="rounded-md bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            className="bg-amber-600 text-white hover:bg-amber-700"
           >
             {resuming ? "Đang gửi…" : "Tiếp tục"}
-          </button>
+          </Button>
         </section>
       )}
 
       {streamEvents.length > 0 && (
-        <details className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
-          <summary className="cursor-pointer text-xs font-medium text-zinc-500">
+        <details className="rounded-lg border border-border p-3">
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
             Hoạt động agent ({streamEvents.length} sự kiện)
           </summary>
           <ul className="mt-2 space-y-1">
             {streamEvents.map((ev, i) => (
-              <li key={i} className="font-mono text-[10px] text-zinc-500">
-                <span className="font-semibold text-zinc-600 dark:text-zinc-300">
-                  {ev.event}
-                </span>{" "}
+              <li key={i} className="font-mono text-[10px] text-muted-foreground">
+                <span className="font-semibold text-foreground">{ev.event}</span>{" "}
                 {summarizeEventData(ev.data).slice(0, 200)}
               </li>
             ))}
@@ -235,7 +242,11 @@ export function ExecutionRunThread({
 
       {run.workrun_id && workrun && (
         <section className="space-y-3">
-          <p className="text-xs text-zinc-500">
+          {/* the kernel's raw sub-state as a detail line — distinct from
+              the lifecycle pill (agent_finished covers both
+              candidate_complete and awaiting_approval, and the
+              distinction is worth seeing) */}
+          <p className="text-xs text-muted-foreground">
             Kernel: <b>{statusLabel(workrun.status)}</b>
             {workrun.step_label ? ` — ${workrun.step_label}` : ""}
           </p>
@@ -267,7 +278,7 @@ export function ExecutionRunThread({
                         { name: d.name },
                       )
                     }
-                    className="text-xs text-blue-600 underline"
+                    className="text-xs text-primary underline"
                   >
                     {d.name}
                   </button>
@@ -280,13 +291,13 @@ export function ExecutionRunThread({
         </section>
       )}
       {run.workrun_id && !workrun && !err && (
-        <p className="text-xs text-zinc-500">Đang tải workrun…</p>
+        <p className="text-xs text-muted-foreground">Đang tải workrun…</p>
       )}
       {workrun && (
         <button
           type="button"
           onClick={reloadWorkrun}
-          className="text-xs text-zinc-400 underline"
+          className="text-xs text-muted-foreground underline"
         >
           Làm mới
         </button>

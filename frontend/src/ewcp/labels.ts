@@ -3,6 +3,8 @@
 // (kernel repo src/ewcp/api/static/index.html) so the pane and the kernel
 // demo tell the user the same words.
 
+import type { ExecutionRun, RunView } from "./api";
+
 // kernel TaskStatus values (lowercase enums) → Vietnamese pill text.
 // "rejected" is not a kernel TaskStatus but is kept for the pane's
 // defensive red styling of a rejected run.
@@ -117,6 +119,89 @@ export const THREE_WAY_FLAG_LABEL: Record<string, string> = {
 
 export function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
+}
+
+// ---------------------------------------------------------------------------
+// WP-A6 unified lifecycle vocabulary (kernel repo
+// docs/program/MASTER_EXECUTION_PLAN.md §WP-A6). ONE status story per run,
+// projected over the two raw enums — the launcher projection
+// (ExecutionRunStatus) and kernel truth (TaskStatus on RunView). A bound
+// workrun wins: the kernel owns governed truth. No kernel view → the
+// launcher record alone. The write-path states (approved_to_act as a
+// kernel status, external_executed) have no producer until A5b — the
+// switch passes them through so a kernel that ships them is labeled
+// without a pane change.
+// ---------------------------------------------------------------------------
+
+export type LifecycleStatus =
+  | "accepted"
+  | "agent_finished"
+  | "verified"
+  | "approved_to_act"
+  | "external_executed"
+  | "UNKNOWN";
+
+/** One lifecycle answer for a run + its optional kernel view. Terminal
+ * failures (failed/timeout/cancelled) and unrecognized values claim no
+ * checkpoint — UNKNOWN, not a guess. */
+export function lifecycleStatus(
+  run: Pick<ExecutionRun, "status">,
+  workrun?: Pick<RunView, "status" | "decision"> | null,
+): LifecycleStatus {
+  if (workrun) {
+    switch (workrun.status) {
+      case "external_executed":
+        return "external_executed";
+      case "approved_to_act":
+        return "approved_to_act";
+      case "verified":
+        return "verified";
+      case "candidate_complete":
+      case "awaiting_approval":
+        // the agent's part is done — the ball is with verification or
+        // the human gate
+        return "agent_finished";
+      case "received":
+      case "running":
+      case "awaiting_input":
+      case "interrupted":
+        // an approved AcceptanceContract upgrades mid-flight work to
+        // approved_to_act (spec 005 §7.4 — the agent proceeds under the
+        // bound criteria)
+        return workrun.decision?.answer === "approve_contract"
+          ? "approved_to_act"
+          : "accepted";
+      default:
+        return "UNKNOWN";
+    }
+  }
+  switch (run.status) {
+    case "completed":
+      return "agent_finished";
+    case "launching":
+    case "running":
+    case "pending_interrupt":
+    case "interrupted":
+      return "accepted";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+export const LIFECYCLE_LABEL: Record<LifecycleStatus, string> = {
+  accepted: "Đã tiếp nhận",
+  agent_finished: "Agent hoàn tất",
+  verified: "Đã niêm phong",
+  approved_to_act: "Đã duyệt tác động",
+  external_executed: "Đã tác động bên ngoài",
+  UNKNOWN: "Không rõ",
+};
+
+export function lifecycleLabel(
+  run: Pick<ExecutionRun, "status">,
+  workrun?: Pick<RunView, "status" | "decision"> | null,
+): string {
+  return LIFECYCLE_LABEL[lifecycleStatus(run, workrun)];
 }
 
 export function decisionLabel(answer: string): string {

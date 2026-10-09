@@ -5,6 +5,7 @@
 // list — so a newly registered pack appears by itself. Cards only
 // pre-fill the draft; the free-form intent box stays the primary intake.
 
+import { Button } from "@/components/ui/button";
 import type { OutcomeSpecView } from "@/ewcp/api";
 import { outcomeLabel } from "@/ewcp/labels";
 import { starterIntentsFor } from "@/ewcp/registry";
@@ -38,7 +39,7 @@ export function CapabilityGallery({
   );
   return (
     <section className="space-y-2" aria-label="Gói nghiệp vụ governed">
-      <h2 className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+      <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         Gói nghiệp vụ governed
       </h2>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -47,7 +48,7 @@ export function CapabilityGallery({
           return (
             <article
               key={s.outcome_type}
-              className="flex flex-col gap-2 rounded-lg border border-zinc-300 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900"
+              className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4"
             >
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-sm font-semibold">
@@ -57,13 +58,13 @@ export function CapabilityGallery({
                   Governed — niêm phong kiểm chứng
                 </span>
               </div>
-              <p className="text-xs text-zinc-500">{s.description}</p>
+              <p className="text-xs text-muted-foreground">{s.description}</p>
               {s.requires_inputs.length > 0 && (
                 <ul className="flex flex-wrap gap-1">
                   {s.requires_inputs.map((i) => (
                     <li
                       key={i.name}
-                      className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                      className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
                     >
                       {i.label_vn}
                       {i.required ? "" : " (tuỳ chọn)"}
@@ -80,7 +81,7 @@ export function CapabilityGallery({
                       disabled={busy}
                       onClick={() => onIntent(t)}
                       title="Điền vào ô yêu cầu"
-                      className="rounded border border-blue-300 px-2 py-0.5 text-left text-[11px] text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                      className="rounded border border-border px-2 py-0.5 text-left text-[11px] text-primary transition-colors hover:bg-accent disabled:opacity-50"
                     >
                       {t}
                     </button>
@@ -88,14 +89,15 @@ export function CapabilityGallery({
                 </div>
               )}
               <div className="mt-auto pt-1">
-                <button
+                <Button
                   type="button"
+                  size="sm"
                   disabled={busy}
                   onClick={() => onGoverned(s)}
-                  className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                  className="bg-emerald-600 text-white hover:bg-emerald-700"
                 >
                   Chạy governed
-                </button>
+                </Button>
               </div>
             </article>
           );
@@ -104,17 +106,17 @@ export function CapabilityGallery({
           <div
             role="group"
             aria-disabled="true"
-            className="flex cursor-not-allowed flex-col gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-4 opacity-60 select-none dark:border-zinc-700 dark:bg-zinc-900/60"
+            className="flex cursor-not-allowed flex-col gap-2 rounded-lg border border-dashed border-border bg-muted p-4 opacity-60 select-none"
           >
             <div className="flex items-start justify-between gap-2">
-              <h3 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400">
+              <h3 className="text-sm font-semibold text-muted-foreground">
                 {outcomeLabel(COMING_SOON.outcomeType)}
               </h3>
-              <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400">
+              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
                 Sắp có — chưa mở
               </span>
             </div>
-            <p className="text-xs text-zinc-400">{COMING_SOON.description}</p>
+            <p className="text-xs text-muted-foreground">{COMING_SOON.description}</p>
           </div>
         )}
       </div>

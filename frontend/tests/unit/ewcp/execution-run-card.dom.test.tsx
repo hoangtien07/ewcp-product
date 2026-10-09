@@ -2,10 +2,7 @@ import { afterEach, describe, expect, rs, test } from "@rstest/core";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import type { ExecutionRun } from "@/ewcp/api";
-import {
-  ExecutionRunCard,
-  runStatusLabel,
-} from "@/ewcp/components/execution-run-card";
+import { ExecutionRunCard } from "@/ewcp/components/execution-run-card";
 
 afterEach(() => {
   cleanup();
@@ -31,14 +28,24 @@ describe("ExecutionRunCard", () => {
   test("renders intent, lifecycle status and governed link", () => {
     render(<ExecutionRunCard run={run} active={false} onSelect={rs.fn()} />);
     expect(screen.getByText("Đối soát hóa đơn kỳ 09")).toBeTruthy();
-    expect(screen.getByText("Đang chạy")).toBeTruthy();
+    // the card renders the WP-A6 lifecycle vocabulary (a running run is
+    // "accepted" — the work is taken on, nothing claimed yet)
+    expect(screen.getByText("Đã tiếp nhận")).toBeTruthy();
     expect(screen.getByText("governed")).toBeTruthy();
     expect(screen.getByText(/wr:wr-12345…/)).toBeTruthy();
   });
 
   test("pending_interrupt is not presented as complete", () => {
-    expect(runStatusLabel("pending_interrupt")).toBe("Chờ thao tác");
-    expect(runStatusLabel("completed")).toBe("Hoàn tất");
+    render(
+      <ExecutionRunCard
+        run={{ ...run, status: "pending_interrupt" }}
+        active={false}
+        onSelect={rs.fn()}
+      />,
+    );
+    // still "accepted" — the interrupt waits on a human, not finished
+    expect(screen.getByText("Đã tiếp nhận")).toBeTruthy();
+    expect(screen.queryByText("Agent hoàn tất")).toBeNull();
   });
 
   test("click selects the run", () => {

@@ -16,36 +16,6 @@ export function isZipInput(input: Pick<OutcomeInputSpec, "accept">): boolean {
     .includes(".zip");
 }
 
-/** Declared inputs across all specs, registry order, deduped by
- * multipart field name — the intake slots when no run is selected. */
-export function unionInputs(specs: OutcomeSpecView[]): OutcomeInputSpec[] {
-  const seen = new Set<string>();
-  const out: OutcomeInputSpec[] = [];
-  for (const s of specs) {
-    for (const i of s.requires_inputs) {
-      if (!seen.has(i.name)) {
-        seen.add(i.name);
-        out.push(i);
-      }
-    }
-  }
-  return out;
-}
-
-/** Inputs the slot row should show: the active run's own spec; the union
- * for a fresh request. A run whose outcome_type the registry doesn't
- * declare gets NO slots — unioning pack slots there would offer fields
- * the intake rejects. */
-export function inputsFor(
-  specs: OutcomeSpecView[],
-  outcomeType?: string,
-): OutcomeInputSpec[] {
-  if (outcomeType === undefined) return unionInputs(specs);
-  return (
-    specs.find((s) => s.outcome_type === outcomeType)?.requires_inputs ?? []
-  );
-}
-
 // Starter intents per outcome_type — the gallery chips that fill the
 // intent box on click. Entries must be routable by the kernel: packs
 // with required_context need the parsed keys in the text (the three_way
