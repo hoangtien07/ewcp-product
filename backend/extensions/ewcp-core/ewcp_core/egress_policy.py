@@ -452,7 +452,18 @@ class EgressPolicy:
                 return ChannelDecision(True, CHANNEL_TOOL)
             return ChannelDecision(False, CHANNEL_TOOL, f"tool {name!r} egress-capable or unknown under local_only — denied")
 
-        # restricted
+        # restricted — destination authorization is per-call data, not a
+        # property of the tool name: a url/uri/endpoint argument must land in
+        # allowed_domains even when the tool itself is allowlisted, or an
+        # operator allowlist silently authorizes every destination (e.g. an
+        # allowed MCP fetch tool reaching an unauthorized MCP server).
+        host = _tool_destination_host(args)
+        if host is not None and not _host_in_list(host, self.config.allowed_domains):
+            return ChannelDecision(
+                False,
+                CHANNEL_TOOL,
+                f"tool {name!r} destination {host!r} not in allowed_domains under restricted — denied",
+            )
         if name in self.config.allowed_tools:
             return ChannelDecision(True, CHANNEL_TOOL)
         if name in _SAFE_BUILTIN_TOOLS:
@@ -464,8 +475,9 @@ class EgressPolicy:
                     return ChannelDecision(False, CHANNEL_TOOL, f"bash rides sandbox egress: {sandbox.reason}")
             return ChannelDecision(True, CHANNEL_TOOL)
         if name in _NETWORK_TOOLS or name.startswith(_NETWORK_TOOL_PREFIXES):
-            host = _tool_destination_host(args)
-            if host is not None and _host_in_list(host, self.config.allowed_domains):
+            # an extractable host already passed the allowlist above; a
+            # provider-bound call carries no destination to authorize.
+            if host is not None:
                 return ChannelDecision(True, CHANNEL_TOOL)
             return ChannelDecision(
                 False,
