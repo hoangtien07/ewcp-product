@@ -45,7 +45,7 @@ export function GovernedIntake({
           <h3 className="text-sm font-semibold">
             {outcomeLabel(spec.outcome_type)}
           </h3>
-          <p className="text-xs text-muted-foreground">{spec.description}</p>
+          <p className="text-muted-foreground text-xs">{spec.description}</p>
         </div>
         <Button
           type="button"
@@ -74,17 +74,17 @@ export function GovernedIntake({
                 [input.name]: Array.from(e.target.files ?? []),
               }))
             }
-            className="block w-full text-xs text-muted-foreground file:mr-2 file:rounded file:border file:border-border file:bg-background file:px-2 file:py-1 file:text-xs"
+            className="text-muted-foreground file:border-border file:bg-background block w-full text-xs file:mr-2 file:rounded file:border file:px-2 file:py-1 file:text-xs"
           />
           {(slots[input.name]?.length ?? 0) > 0 && (
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-muted-foreground text-[11px]">
               {slots[input.name]!.map((f) => f.name).join(", ")}
             </p>
           )}
         </div>
       ))}
       {zipSlots.length > 1 && (
-        <p className="text-xs text-destructive">
+        <p className="text-destructive text-xs">
           Kernel chỉ nhận một trường zip mỗi lần chạy — bỏ bớt một trong{" "}
           {zipSlots.map((i) => i.name).join(", ")}.
         </p>

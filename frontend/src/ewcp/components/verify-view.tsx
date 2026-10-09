@@ -103,11 +103,11 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border bg-card p-4">
+      <div className="border-border bg-card rounded-lg border p-4">
         <h2 className="text-sm font-semibold">
           Tra cứu bằng chứng niêm phong — link công khai
         </h2>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="text-muted-foreground mt-1 text-xs">
           Ai có link đều tra cứu được. Link chứng minh manifest đã niêm phong
           tồn tại và seal còn nguyên; kiểm chứng từng byte của file cần evidence
           export + artifacts (form bên dưới).
@@ -128,7 +128,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
           </Button>
         </div>
         {permalinkErr && (
-          <p className="mt-2 text-xs text-destructive">{permalinkErr}</p>
+          <p className="text-destructive mt-2 text-xs">{permalinkErr}</p>
         )}
       </div>
 
@@ -197,7 +197,8 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
                     <span className="font-mono">{c.name}</span>
                     {c.detail && (
                       <span className="text-muted-foreground">
-                        {" "}— {c.detail}
+                        {" "}
+                        — {c.detail}
                       </span>
                     )}
                   </span>
@@ -207,7 +208,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
           )}
           {(permalink.manifest.deliverables?.length ?? 0) > 0 && (
             <div className="mt-3">
-              <div className="text-xs font-semibold text-muted-foreground">
+              <div className="text-muted-foreground text-xs font-semibold">
                 Artifacts đã niêm phong
               </div>
               <ul className="mt-1 space-y-1 text-xs">
@@ -217,7 +218,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
                       {d.name ?? d.deliverable_id}
                     </span>
                     {d.sha256 && (
-                      <span className="font-mono break-all text-muted-foreground">
+                      <span className="text-muted-foreground font-mono break-all">
                         sha256:{d.sha256.slice(0, 16)}…
                       </span>
                     )}
@@ -229,11 +230,11 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
         </div>
       )}
 
-      <div className="rounded-lg border border-border bg-card p-4">
+      <div className="border-border bg-card rounded-lg border p-4">
         <h2 className="text-sm font-semibold">
           Xác minh độc lập — verify-by-them
         </h2>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="text-muted-foreground mt-1 text-xs">
           Upload evidence export của run cùng các artifact. Hệ thống đo lại
           sha256 từng file + recompute manifest_hash — sửa 1 byte cũng FAIL.
           Evidence export lấy từ trang run của chủ sở hữu (owner-scoped).
@@ -255,9 +256,9 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
           </Button>
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <label className="block cursor-pointer rounded-md border border-dashed border-border px-3 py-2 text-sm">
+          <label className="border-border block cursor-pointer rounded-md border border-dashed px-3 py-2 text-sm">
             <span>evidence.json</span>
-            <span className="ml-2 font-mono text-xs text-muted-foreground">
+            <span className="text-muted-foreground ml-2 font-mono text-xs">
               {evidenceFile?.name ?? "chọn file…"}
             </span>
             <input
@@ -267,9 +268,9 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
               onChange={(e) => setEvidenceFile(e.target.files?.[0] ?? null)}
             />
           </label>
-          <label className="block cursor-pointer rounded-md border border-dashed border-border px-3 py-2 text-sm">
+          <label className="border-border block cursor-pointer rounded-md border border-dashed px-3 py-2 text-sm">
             <span>artifacts (xlsx, json…)</span>
-            <span className="ml-2 font-mono text-xs text-muted-foreground">
+            <span className="text-muted-foreground ml-2 font-mono text-xs">
               {artifactFiles.length > 0
                 ? `${artifactFiles.length} file`
                 : "chọn nhiều file…"}
@@ -291,7 +292,7 @@ export function VerifyView({ initialHash }: { initialHash?: string }) {
         >
           {busy ? "Đang xác minh…" : "Xác minh"}
         </Button>
-        {err && <p className="mt-2 text-xs text-destructive">{err}</p>}
+        {err && <p className="text-destructive mt-2 text-xs">{err}</p>}
       </div>
 
       {result && (

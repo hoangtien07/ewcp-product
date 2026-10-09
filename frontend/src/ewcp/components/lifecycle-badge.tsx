@@ -11,8 +11,7 @@ import { LIFECYCLE_LABEL, type LifecycleStatus } from "@/ewcp/labels";
 // Lifecycle semantics → app color story: blue = in flight, emerald =
 // done/sealed, violet = write path, amber = ambiguous/unclaimable.
 const LIFECYCLE_CLS: Record<LifecycleStatus, string> = {
-  accepted:
-    "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+  accepted: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
   agent_finished:
     "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
   verified: "bg-emerald-600 text-white dark:bg-emerald-600",

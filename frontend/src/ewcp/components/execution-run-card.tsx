@@ -32,12 +32,12 @@ export function ExecutionRunCard({
     >
       <div className="flex items-center justify-between gap-2">
         <LifecycleBadge status={lifecycleStatus(run)} />
-        <span className="text-[10px] text-muted-foreground">
+        <span className="text-muted-foreground text-[10px]">
           {run.task_mode === "governed" ? "governed" : "general"}
         </span>
       </div>
       <p className="mt-1 line-clamp-2 text-sm">{run.intent}</p>
-      <div className="mt-1 flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+      <div className="text-muted-foreground mt-1 flex items-center gap-2 font-mono text-[10px]">
         <span title="execution_run_id">
           {run.execution_run_id.slice(0, 8)}…
         </span>

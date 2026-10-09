@@ -197,9 +197,7 @@ describe("lifecycleStatus — WP-A6 unified status vocabulary", () => {
     expect(
       lifecycleStatus(run, wr("running", { answer: "approve_contract" })),
     ).toBe("approved_to_act");
-    expect(lifecycleStatus(run, wr("approved_to_act"))).toBe(
-      "approved_to_act",
-    );
+    expect(lifecycleStatus(run, wr("approved_to_act"))).toBe("approved_to_act");
     expect(lifecycleStatus(run, wr("external_executed"))).toBe(
       "external_executed",
     );
@@ -225,18 +223,18 @@ describe("lifecycleStatus — WP-A6 unified status vocabulary", () => {
     expect(lifecycleStatus({ status: "completed" }, null)).toBe(
       "agent_finished",
     );
-    expect(
-      lifecycleStatus({ status: "completed" } as never, undefined),
-    ).toBe("agent_finished");
+    expect(lifecycleStatus({ status: "completed" } as never, undefined)).toBe(
+      "agent_finished",
+    );
   });
 
   test("every lifecycle token has a Vietnamese label", () => {
     for (const [k, v] of Object.entries(LIFECYCLE_LABEL)) {
       expect(v, `missing label for ${k}`).toBeTruthy();
     }
-    expect(
-      lifecycleLabel(GOVERNED_EXECUTION_RUN, VERIFIED_RUN_VIEW),
-    ).toBe("Đã niêm phong");
+    expect(lifecycleLabel(GOVERNED_EXECUTION_RUN, VERIFIED_RUN_VIEW)).toBe(
+      "Đã niêm phong",
+    );
     expect(lifecycleLabel({ status: "running" })).toBe("Đã tiếp nhận");
   });
 });

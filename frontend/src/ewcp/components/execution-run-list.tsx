@@ -31,14 +31,12 @@ export function ExecutionRunList({
 
   useEffect(load, [load, refreshKey]);
 
-  if (err) return <p className="text-xs text-destructive">{err}</p>;
+  if (err) return <p className="text-destructive text-xs">{err}</p>;
   if (runs === null)
-    return <p className="text-xs text-muted-foreground">Đang tải…</p>;
+    return <p className="text-muted-foreground text-xs">Đang tải…</p>;
   if (runs.length === 0)
     return (
-      <p className="text-xs text-muted-foreground">
-        Chưa có ExecutionRun nào.
-      </p>
+      <p className="text-muted-foreground text-xs">Chưa có ExecutionRun nào.</p>
     );
 
   return (

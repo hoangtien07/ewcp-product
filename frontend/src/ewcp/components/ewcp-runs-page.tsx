@@ -122,7 +122,7 @@ export function EwcpRunsPage({
         />
       </aside>
       <main className="space-y-4">
-        <div className="rounded-lg border border-border bg-card p-4">
+        <div className="border-border bg-card rounded-lg border p-4">
           <Textarea
             value={intent}
             onChange={(e) => setIntent(e.target.value)}
@@ -136,7 +136,7 @@ export function EwcpRunsPage({
             >
               {busy && !governedSpec ? "Đang chạy…" : "Chạy"}
             </Button>
-            {err && <p className="text-xs text-destructive">{err}</p>}
+            {err && <p className="text-destructive text-xs">{err}</p>}
           </div>
         </div>
         {governedSpec && (

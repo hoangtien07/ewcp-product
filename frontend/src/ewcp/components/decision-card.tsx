@@ -91,8 +91,8 @@ export function DecisionCard({
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
-      <div className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+    <div className="border-border bg-card rounded-lg border p-4 shadow-sm">
+      <div className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
         {KIND_LABEL[q.kind] ?? q.kind}
       </div>
       <p className="mt-1 text-sm whitespace-pre-wrap">{q.prompt}</p>
@@ -130,7 +130,7 @@ export function DecisionCard({
           {disabledHint}
         </p>
       )}
-      {err && <p className="mt-2 text-xs text-destructive">{err}</p>}
+      {err && <p className="text-destructive mt-2 text-xs">{err}</p>}
     </div>
   );
 }

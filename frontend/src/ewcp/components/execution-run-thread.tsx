@@ -154,9 +154,7 @@ export function ExecutionRunThread({
 
   if (!run)
     return (
-      <p className="text-xs text-muted-foreground">
-        {err ?? "Đang tải run…"}
-      </p>
+      <p className="text-muted-foreground text-xs">{err ?? "Đang tải run…"}</p>
     );
 
   const pending = workrun?.pending_questions ?? [];
@@ -167,7 +165,7 @@ export function ExecutionRunThread({
 
   return (
     <div className="space-y-4">
-      <header className="rounded-lg border border-border bg-card p-4">
+      <header className="border-border bg-card rounded-lg border p-4">
         <div className="flex items-center justify-between gap-2">
           {/* the WP-A6 lifecycle claim — one vocabulary over the launcher
               and kernel enums; the raw kernel sub-state stays below as a
@@ -175,18 +173,18 @@ export function ExecutionRunThread({
           <h2 className="flex items-center text-sm font-semibold">
             <LifecycleBadge status={lifecycleStatus(run, workrun)} />
             {streaming && (
-              <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+              <span className="text-muted-foreground ml-2 text-[10px] font-normal">
                 · live
               </span>
             )}
           </h2>
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-muted-foreground text-[10px]">
             {run.task_mode}
             {run.workrun_id && ` · wr:${run.workrun_id.slice(0, 8)}…`}
           </span>
         </div>
         <p className="mt-1 text-sm whitespace-pre-wrap">{run.intent}</p>
-        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+        <p className="text-muted-foreground mt-1 font-mono text-[10px]">
           {run.execution_run_id} ·{" "}
           <Link
             href={`/workspace/chats/${encodeURIComponent(run.thread_id)}`}
@@ -199,7 +197,7 @@ export function ExecutionRunThread({
         </p>
       </header>
 
-      {err && <p className="text-xs text-destructive">{err}</p>}
+      {err && <p className="text-destructive text-xs">{err}</p>}
 
       {run.status === "pending_interrupt" && (
         <section className="space-y-2 rounded-lg border border-amber-300 bg-amber-50/60 p-4 dark:border-amber-800 dark:bg-amber-950/30">
@@ -225,14 +223,19 @@ export function ExecutionRunThread({
       )}
 
       {streamEvents.length > 0 && (
-        <details className="rounded-lg border border-border p-3">
-          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+        <details className="border-border rounded-lg border p-3">
+          <summary className="text-muted-foreground cursor-pointer text-xs font-medium">
             Hoạt động agent ({streamEvents.length} sự kiện)
           </summary>
           <ul className="mt-2 space-y-1">
             {streamEvents.map((ev, i) => (
-              <li key={i} className="font-mono text-[10px] text-muted-foreground">
-                <span className="font-semibold text-foreground">{ev.event}</span>{" "}
+              <li
+                key={i}
+                className="text-muted-foreground font-mono text-[10px]"
+              >
+                <span className="text-foreground font-semibold">
+                  {ev.event}
+                </span>{" "}
                 {summarizeEventData(ev.data).slice(0, 200)}
               </li>
             ))}
@@ -246,7 +249,7 @@ export function ExecutionRunThread({
               the lifecycle pill (agent_finished covers both
               candidate_complete and awaiting_approval, and the
               distinction is worth seeing) */}
-          <p className="text-xs text-muted-foreground">
+          <p className="text-muted-foreground text-xs">
             Kernel: <b>{statusLabel(workrun.status)}</b>
             {workrun.step_label ? ` — ${workrun.step_label}` : ""}
           </p>
@@ -278,7 +281,7 @@ export function ExecutionRunThread({
                         { name: d.name },
                       )
                     }
-                    className="text-xs text-primary underline"
+                    className="text-primary text-xs underline"
                   >
                     {d.name}
                   </button>
@@ -291,13 +294,13 @@ export function ExecutionRunThread({
         </section>
       )}
       {run.workrun_id && !workrun && !err && (
-        <p className="text-xs text-muted-foreground">Đang tải workrun…</p>
+        <p className="text-muted-foreground text-xs">Đang tải workrun…</p>
       )}
       {workrun && (
         <button
           type="button"
           onClick={reloadWorkrun}
-          className="text-xs text-muted-foreground underline"
+          className="text-muted-foreground text-xs underline"
         >
           Làm mới
         </button>

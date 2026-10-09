@@ -1,11 +1,7 @@
 import { describe, expect, test } from "@rstest/core";
 
 import type { OutcomeSpecView } from "@/ewcp/api";
-import {
-  FALLBACK_SPECS,
-  isZipInput,
-  starterIntentsFor,
-} from "@/ewcp/registry";
+import { FALLBACK_SPECS, isZipInput, starterIntentsFor } from "@/ewcp/registry";
 
 const a: OutcomeSpecView = {
   outcome_type: "invoice_recon",

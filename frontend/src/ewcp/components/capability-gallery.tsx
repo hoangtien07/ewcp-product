@@ -39,7 +39,7 @@ export function CapabilityGallery({
   );
   return (
     <section className="space-y-2" aria-label="Gói nghiệp vụ governed">
-      <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+      <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
         Gói nghiệp vụ governed
       </h2>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -48,7 +48,7 @@ export function CapabilityGallery({
           return (
             <article
               key={s.outcome_type}
-              className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4"
+              className="border-border bg-card flex flex-col gap-2 rounded-lg border p-4"
             >
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-sm font-semibold">
@@ -58,13 +58,13 @@ export function CapabilityGallery({
                   Governed — niêm phong kiểm chứng
                 </span>
               </div>
-              <p className="text-xs text-muted-foreground">{s.description}</p>
+              <p className="text-muted-foreground text-xs">{s.description}</p>
               {s.requires_inputs.length > 0 && (
                 <ul className="flex flex-wrap gap-1">
                   {s.requires_inputs.map((i) => (
                     <li
                       key={i.name}
-                      className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                      className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[11px]"
                     >
                       {i.label_vn}
                       {i.required ? "" : " (tuỳ chọn)"}
@@ -81,7 +81,7 @@ export function CapabilityGallery({
                       disabled={busy}
                       onClick={() => onIntent(t)}
                       title="Điền vào ô yêu cầu"
-                      className="rounded border border-border px-2 py-0.5 text-left text-[11px] text-primary transition-colors hover:bg-accent disabled:opacity-50"
+                      className="border-border text-primary hover:bg-accent rounded border px-2 py-0.5 text-left text-[11px] transition-colors disabled:opacity-50"
                     >
                       {t}
                     </button>
@@ -106,17 +106,19 @@ export function CapabilityGallery({
           <div
             role="group"
             aria-disabled="true"
-            className="flex cursor-not-allowed flex-col gap-2 rounded-lg border border-dashed border-border bg-muted p-4 opacity-60 select-none"
+            className="border-border bg-muted flex cursor-not-allowed flex-col gap-2 rounded-lg border border-dashed p-4 opacity-60 select-none"
           >
             <div className="flex items-start justify-between gap-2">
-              <h3 className="text-sm font-semibold text-muted-foreground">
+              <h3 className="text-muted-foreground text-sm font-semibold">
                 {outcomeLabel(COMING_SOON.outcomeType)}
               </h3>
-              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+              <span className="bg-muted text-muted-foreground shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold">
                 Sắp có — chưa mở
               </span>
             </div>
-            <p className="text-xs text-muted-foreground">{COMING_SOON.description}</p>
+            <p className="text-muted-foreground text-xs">
+              {COMING_SOON.description}
+            </p>
           </div>
         )}
       </div>

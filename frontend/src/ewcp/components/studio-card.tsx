@@ -125,10 +125,10 @@ function ReconStudio({ rows }: { rows: ReconRow[] }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
           Bảng đối soát
         </span>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-muted-foreground text-xs">
           {matched.length}/{rows.length} khớp · {exceptions.length} lệch
         </span>
       </div>
@@ -137,7 +137,7 @@ function ReconStudio({ rows }: { rows: ReconRow[] }) {
           Mọi dòng đều khớp — không có ngoại lệ.
         </p>
       ) : (
-        <ul className="divide-y divide-border text-sm">
+        <ul className="divide-border divide-y text-sm">
           {exceptions.map((r, i) => (
             <li key={i} className="py-2">
               <div className="flex items-center gap-2">
@@ -147,16 +147,18 @@ function ReconStudio({ rows }: { rows: ReconRow[] }) {
                 />
                 <span className="font-mono text-xs">{r.source}</span>
                 {typeof r.confidence === "number" && (
-                  <span className="ml-auto text-[11px] text-muted-foreground">
+                  <span className="text-muted-foreground ml-auto text-[11px]">
                     {Math.round(r.confidence * 100)}%
                   </span>
                 )}
               </div>
               {r.detail && (
-                <p className="mt-0.5 text-xs text-muted-foreground">{r.detail}</p>
+                <p className="text-muted-foreground mt-0.5 text-xs">
+                  {r.detail}
+                </p>
               )}
               {r.sources.length > 1 && (
-                <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                <p className="text-muted-foreground mt-0.5 font-mono text-[11px]">
                   {r.sources.join(" ⇄ ")}
                 </p>
               )}
@@ -174,7 +176,7 @@ function DossierStudio({ result }: { result: DossierResult }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
           Checklist hồ sơ
         </span>
         <Chip
@@ -195,7 +197,7 @@ function DossierStudio({ result }: { result: DossierResult }) {
           {warns} cảnh báo — cần người xem xét.
         </p>
       )}
-      <ul className="divide-y divide-border text-sm">
+      <ul className="divide-border divide-y text-sm">
         {result.rows.map((r, i) => (
           <li key={i} className="flex gap-2 py-2">
             <span
@@ -206,10 +208,12 @@ function DossierStudio({ result }: { result: DossierResult }) {
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold">{r.check}</p>
               {r.detail && (
-                <p className="mt-0.5 text-xs text-muted-foreground">{r.detail}</p>
+                <p className="text-muted-foreground mt-0.5 text-xs">
+                  {r.detail}
+                </p>
               )}
               {r.doc_refs.length > 0 && (
-                <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                <p className="text-muted-foreground mt-0.5 font-mono text-[11px]">
                   {r.doc_refs.join(" · ")}
                 </p>
               )}
@@ -218,15 +222,15 @@ function DossierStudio({ result }: { result: DossierResult }) {
         ))}
       </ul>
       {result.documents.length > 0 && (
-        <div className="border-t border-border pt-2">
-          <p className="mb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        <div className="border-border border-t pt-2">
+          <p className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">
             Chứng từ đã phân loại
           </p>
-          <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground">
+          <ul className="text-muted-foreground space-y-0.5 font-mono text-[11px]">
             {result.documents.map((d, i) => (
               <li key={i} className="flex gap-2">
                 <span className="truncate">{d.file}</span>
-                <span className="ml-auto shrink-0 rounded bg-muted px-1.5">
+                <span className="bg-muted ml-auto shrink-0 rounded px-1.5">
                   {d.doc_type}
                 </span>
               </li>
@@ -263,12 +267,12 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
           Đối chiếu 3 chiều
         </span>
         <Chip label={verdict.label} cls={verdict.cls} />
       </div>
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
+      <div className="text-muted-foreground flex items-center justify-between text-xs">
         <span>
           {matched.length}/{rows.length} dòng khớp · {exceptions.length} ngoại
           lệ
@@ -282,7 +286,7 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
       ) : (
         <>
           {lineRows.length > 0 && (
-            <ul className="divide-y divide-border text-sm">
+            <ul className="divide-border divide-y text-sm">
               {lineRows.map((r, i) => (
                 <li key={i} className="py-2">
                   <div className="flex items-center gap-2">
@@ -294,12 +298,12 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
                       {r.po_no || r.source}
                     </span>
                     {r.label && (
-                      <span className="truncate text-xs text-muted-foreground">
+                      <span className="text-muted-foreground truncate text-xs">
                         {r.label}
                       </span>
                     )}
                   </div>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
+                  <p className="text-muted-foreground mt-0.5 text-xs">
                     đặt {qty(r.ordered_qty)} · nhận {qty(r.received_qty)} · HĐ{" "}
                     {qty(r.invoiced_qty)}
                     {r.invoiced_amount &&
@@ -311,7 +315,7 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
                       {r.flags.map((f) => (
                         <span
                           key={f}
-                          className="rounded bg-muted px-1.5 text-[11px] text-muted-foreground"
+                          className="bg-muted text-muted-foreground rounded px-1.5 text-[11px]"
                         >
                           {threeWayFlagLabel(f)}
                         </span>
@@ -319,7 +323,9 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
                     </div>
                   )}
                   {r.detail && (
-                    <p className="mt-0.5 text-xs text-muted-foreground">{r.detail}</p>
+                    <p className="text-muted-foreground mt-0.5 text-xs">
+                      {r.detail}
+                    </p>
                   )}
                 </li>
               ))}
@@ -328,15 +334,13 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
           {docRows.length > 0 && (
             <div
               className={
-                lineRows.length > 0
-                  ? "border-t border-border pt-2"
-                  : ""
+                lineRows.length > 0 ? "border-border border-t pt-2" : ""
               }
             >
-              <p className="mb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              <p className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">
                 Chứng từ
               </p>
-              <ul className="divide-y divide-border text-sm">
+              <ul className="divide-border divide-y text-sm">
                 {docRows.map((r, i) => (
                   <li key={i} className="py-2">
                     <div className="flex items-center gap-2">
@@ -347,7 +351,9 @@ function ThreeWayStudio({ result }: { result: ThreeWayResult }) {
                       <span className="font-mono text-xs">{r.source}</span>
                     </div>
                     {r.detail && (
-                      <p className="mt-0.5 text-xs text-muted-foreground">{r.detail}</p>
+                      <p className="text-muted-foreground mt-0.5 text-xs">
+                        {r.detail}
+                      </p>
                     )}
                   </li>
                 ))}
@@ -411,8 +417,6 @@ export function StudioCard({
 
   if (!body) return null;
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      {body}
-    </div>
+    <div className="border-border bg-card rounded-lg border p-4">{body}</div>
   );
 }

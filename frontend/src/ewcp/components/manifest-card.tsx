@@ -53,10 +53,10 @@ export function ManifestCard({
   // never show the seal before the manifest actually loaded — a verified
   // badge with a placeholder hash presents unavailable evidence as sealed
   if (err) {
-    return <p className="text-xs text-destructive">{err}</p>;
+    return <p className="text-destructive text-xs">{err}</p>;
   }
   if (!manifest) {
-    return <p className="text-xs text-muted-foreground">Đang tải manifest…</p>;
+    return <p className="text-muted-foreground text-xs">Đang tải manifest…</p>;
   }
 
   const checks = (manifest.checks as ManifestCheck[] | undefined) ?? [];
@@ -70,7 +70,7 @@ export function ManifestCard({
     <div className="space-y-3">
       <VerifiedSealBadge manifestHash={hash} />
       {checks.length > 0 && (
-        <div className="rounded-lg border border-border bg-card p-3 text-xs">
+        <div className="border-border bg-card rounded-lg border p-3 text-xs">
           <div className="mb-2 font-semibold">Validator checks</div>
           <ul className="space-y-1">
             {checks.map((c, i) => (
@@ -87,9 +87,7 @@ export function ManifestCard({
                 <span className="flex-1">
                   <span className="font-mono">{c.name}</span>
                   {c.detail && (
-                    <span className="text-muted-foreground">
-                      {" "}— {c.detail}
-                    </span>
+                    <span className="text-muted-foreground"> — {c.detail}</span>
                   )}
                 </span>
               </li>
@@ -98,7 +96,7 @@ export function ManifestCard({
         </div>
       )}
       {run.decision && (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-muted-foreground text-xs">
           Quyết định: <b>{decisionLabel(run.decision.answer)}</b> bởi{" "}
           {run.decision.decided_by}
         </p>
@@ -109,7 +107,7 @@ export function ManifestCard({
         <>
           <a
             href={`/verify/${encodeURIComponent(hash)}`}
-            className="inline-block text-xs font-medium text-primary underline"
+            className="text-primary inline-block text-xs font-medium underline"
           >
             Mở trang verify — khách tự kiểm chứng →
           </a>
