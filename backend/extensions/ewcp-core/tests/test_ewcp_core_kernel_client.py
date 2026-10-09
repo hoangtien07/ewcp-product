@@ -107,9 +107,72 @@ async def test_list_outcomes_path() -> None:
     client = _client(rec)
     body = await client.list_outcomes()
     await client.aclose()
-
     assert body == [{"outcome_type": "invoice_recon"}]
     assert rec.requests[0].url.path == "/outcomes"
+
+
+# -- A6-07 workrun_status list projection ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_workrun_statuses_batched_query() -> None:
+    """A6-07: ONE GET /workruns with the caller's bound id set as a
+    comma-joined `workrun_ids` param — never a per-row fetch."""
+    payload = [
+        {
+            "workrun_id": "wr-1",
+            "status": "awaiting_input",
+            "pending_decision": True,
+            "last_event_at": 1700000001.5,
+        },
+        {
+            "workrun_id": "wr-2",
+            "status": "running",
+            "pending_decision": False,
+            "last_event_at": 1700000000.0,
+        },
+    ]
+    rec = _Recorder([_json_response(payload)])
+    client = _client(rec)
+    body = await client.list_workrun_statuses(["wr-1", "wr-2"], tenant_id="t-1")
+    await client.aclose()
+
+    assert body == payload
+    assert len(rec.requests) == 1
+    req = rec.requests[0]
+    assert req.method == "GET"
+    assert req.url.path == "/workruns"
+    params = dict(req.url.params)
+    assert params["workrun_ids"] == "wr-1,wr-2"
+    assert params["tenant_id"] == "t-1"
+    assert req.headers["x-ewcp-api-key"] == API_KEY
+
+
+@pytest.mark.asyncio
+async def test_list_workrun_statuses_omits_tenant_when_unset() -> None:
+    """Keyed kernels derive tenant from the api key — no param sent."""
+    rec = _Recorder([_json_response([])])
+    client = _client(rec)
+    await client.list_workrun_statuses(["wr-1"])
+    await client.aclose()
+    params = dict(rec.requests[0].url.params)
+    assert params == {"workrun_ids": "wr-1"}
+
+
+@pytest.mark.asyncio
+async def test_list_workrun_statuses_retries_transient() -> None:
+    """Read path rides bounded retry like the other safe reads."""
+    rec = _Recorder(
+        [
+            _json_response({"detail": "down"}, status=503),
+            _json_response([{"workrun_id": "wr-1", "status": "running", "pending_decision": False, "last_event_at": 1.0}]),
+        ]
+    )
+    client = _client(rec)
+    body = await client.list_workrun_statuses(["wr-1"])
+    await client.aclose()
+    assert len(body) == 1
+    assert len(rec.requests) == 2
 
 
 @pytest.mark.asyncio

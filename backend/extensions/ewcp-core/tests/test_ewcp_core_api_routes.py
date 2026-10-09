@@ -60,10 +60,18 @@ class FakeClient:
         self.create_task_response: dict = {"workrun_id": "wr-new"}
         self.create_task_replay = False
         self.run_outcome_response: dict = {"workrun_id": "wr-new"}
+        self.list_workrun_statuses_response: list = []
+        self.list_workrun_statuses_error: Exception | None = None
 
     async def get_workrun(self, workrun_id):
         self.calls.append(("get_workrun", workrun_id))
         return {"workrun_id": workrun_id, "status": "awaiting_approval"}
+
+    async def list_workrun_statuses(self, workrun_ids, *, tenant_id=None):
+        self.calls.append(("list_workrun_statuses", list(workrun_ids), tenant_id))
+        if self.list_workrun_statuses_error is not None:
+            raise self.list_workrun_statuses_error
+        return list(self.list_workrun_statuses_response)
 
     async def get_manifest(self, workrun_id):
         self.calls.append(("get_manifest", workrun_id))
@@ -172,13 +180,18 @@ class FakeRecovery:
 
 
 class FakeService:
-    def __init__(self, *, records=None, client=None, binding=True, launcher=None, config=None) -> None:
+    def __init__(self, *, records=None, client=None, binding=True, launcher=None, config=None, tenant_id=None) -> None:
         self._store = FakeStore(records)
         self.client = client
         self._binding = binding
         self._launcher = launcher
         self._recovery = FakeRecovery(self._store)
         self.config: dict = dict(config or {})
+        self._tenant_id = tenant_id
+
+    @property
+    def invoke_tenant_id(self):
+        return self._tenant_id
 
     @property
     def store(self):
@@ -251,6 +264,89 @@ def test_list_runs_owner_scoped(service):
     c = TestClient(_app(service, agent_runs=object()))
     runs = c.get("/api/ewcp/runs").json()["runs"]
     assert {r["created_by"] for r in runs} == {"u-1"}
+
+
+# -- A6-07 workrun_status list projection -------------------------------------
+
+
+def test_list_runs_hydrates_workrun_status_batched():
+    """Bound rows get the kernel projection via ONE batched call — the
+    approval exists to kill per-row fetches, so exactly one
+    list_workrun_statuses call may cover every bound id."""
+    client = FakeClient()
+    client.list_workrun_statuses_response = [
+        {
+            "workrun_id": "wr-1",
+            "status": "awaiting_input",
+            "pending_decision": True,
+            "last_event_at": 1700000001.5,
+        }
+    ]
+    service = FakeService(
+        records=[
+            _record(workrun_id="wr-1"),
+            _record(workrun_id="wr-2"),
+            _record(workrun_id=None),
+        ],
+        client=client,
+        tenant_id="t-1",
+    )
+    c = TestClient(_app(service, agent_runs=object()))
+
+    runs = c.get("/api/ewcp/runs").json()["runs"]
+    assert len(runs) == 3
+    by_wr = {r.get("workrun_id"): r for r in runs}
+    assert by_wr["wr-1"]["workrun_status"] == {
+        "status": "awaiting_input",
+        "pending_decision": True,
+        "last_event_at": 1700000001.5,
+    }
+    # kernel-truth-at-query-time: unknown to kernel -> no projection
+    assert "workrun_status" not in by_wr["wr-2"]
+    # unbound map row -> never projected
+    assert "workrun_status" not in by_wr[None]
+
+    calls = [c_ for c_ in client.calls if c_[0] == "list_workrun_statuses"]
+    assert len(calls) == 1
+    _, ids, tenant_id = calls[0]
+    assert ids == ["wr-1", "wr-2"]
+    assert tenant_id == "t-1"
+
+
+def test_list_runs_projection_degrades_on_kernel_outage():
+    """A kernel error degrades the projection, never the list itself —
+    the map rows are still renderable off launcher state."""
+    import httpx
+
+    client = FakeClient()
+    client.list_workrun_statuses_error = httpx.ConnectError("kernel down")
+    service = FakeService(records=[_record()], client=client)
+    c = TestClient(_app(service, agent_runs=object()))
+
+    resp = c.get("/api/ewcp/runs")
+    assert resp.status_code == 200
+    (run,) = resp.json()["runs"]
+    assert "workrun_status" not in run
+
+
+def test_list_runs_skips_projection_without_client():
+    service = FakeService(records=[_record()], client=None)
+    c = TestClient(_app(service, agent_runs=object()))
+    resp = c.get("/api/ewcp/runs")
+    assert resp.status_code == 200
+    assert "workrun_status" not in resp.json()["runs"][0]
+
+
+def test_list_runs_thread_branch_stays_map_only():
+    """?thread_id= is the chat-page reverse lookup — documented as a
+    map-store read only; it must NOT fan out to the kernel."""
+    client = FakeClient()
+    service = FakeService(records=[_record(thread_id="t-1")], client=client)
+    c = TestClient(_app(service))
+    runs = c.get("/api/ewcp/runs", params={"thread_id": "t-1"}).json()["runs"]
+    assert len(runs) == 1
+    assert "workrun_status" not in runs[0]
+    assert not [c_ for c_ in client.calls if c_[0] == "list_workrun_statuses"]
 
 
 def test_read_run_owner_scoped(service):
