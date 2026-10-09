@@ -68,6 +68,18 @@ was observed.
   dir** → `ewcp_invoke files:` can't resolve them (`list_uploaded_files`
   → empty). Worked around via the uploads API; check whether message
   attachments should land in `uploads/`.
+  **Resolved (F6 fix):** live re-probe on `product/vnext` shows composer
+  attach DOES land `users/{uid}/threads/{tid}/user-data/uploads/` under
+  the run's own thread+user — the "empty list" observation was
+  `list_uploaded_files`'s by-design exclusion of current-run uploads
+  (surfaced via `<current_uploads>` instead). The real divergence:
+  `ewcp_invoke._resolve_files` read bytes via
+  `host_sandbox_user_data_dir` — the docker-daemon mount-source
+  namespace (`DEER_FLOW_HOST_BASE_DIR`) — instead of the gateway-local
+  `sandbox_user_data_dir` the upload write path uses, so `files:` could
+  never resolve on provisioner/DooD deployments. Fixed to read the
+  gateway-local namespace; regression test
+  `test_invoke_resolves_uploads_via_gateway_local_dir`.
 
 ## Environment notes (operator-side, not shipped)
 

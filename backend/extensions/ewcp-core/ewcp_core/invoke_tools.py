@@ -253,7 +253,11 @@ def _resolve_files(
     if not thread_id:
         return {}, _fail("invalid_request", "files= requires a thread-bound run (no thread_id in runtime context)", "correct")
     user_id = str(ctx.get("user_id") or get_effective_user_id())
-    root = Path(deps.paths_getter().host_sandbox_user_data_dir(str(thread_id), user_id=user_id))
+    # Read bytes via the gateway-local namespace — the same one the upload
+    # write path (sandbox_uploads_dir) and list_uploaded_files use. host_* is
+    # the docker-daemon mount-source namespace (DEER_FLOW_HOST_BASE_DIR) and is
+    # not readable in-process on provisioner/DooD deployments.
+    root = Path(deps.paths_getter().sandbox_user_data_dir(str(thread_id), user_id=user_id))
     out: dict[str, list[tuple]] = {}
     for slot, names in files.items():
         if not isinstance(names, (list, tuple)):

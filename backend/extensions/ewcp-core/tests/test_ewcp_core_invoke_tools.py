@@ -112,11 +112,15 @@ def _missing_paths():
 
 
 class _FakePaths:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, host_root: Path | None = None) -> None:
         self._root = root
+        self._host_root = host_root
 
     def host_sandbox_user_data_dir(self, thread_id: str, *, user_id: str | None = None) -> str:
-        return str(self._root)
+        return str(self._host_root if self._host_root is not None else self._root)
+
+    def sandbox_user_data_dir(self, thread_id: str, *, user_id: str | None = None) -> Path:
+        return self._root
 
 
 class _FakeStore:
@@ -487,6 +491,32 @@ async def test_invoke_resolves_thread_upload_files(tmp_path: Path) -> None:
     assert "mã,tổng".encode() in content
     assert b'name="invoices_zip"' in content
     assert b'name="books"' in content
+
+
+@pytest.mark.asyncio
+async def test_invoke_resolves_uploads_via_gateway_local_dir(tmp_path: Path) -> None:
+    """F6: composer uploads land in the gateway-local base_dir namespace; the
+    host_* namespace is a docker-daemon mount source (DEER_FLOW_HOST_BASE_DIR)
+    and is not readable in-process on provisioner/DooD deployments."""
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / "data.csv").write_bytes(b"a,b\n1,2\n")
+    host_root = tmp_path / "docker-host-side"  # exists on the host, not in-gateway
+    rec = _descriptor_then_run()
+    deps = _deps(_client(rec), paths=lambda: _FakePaths(tmp_path, host_root=host_root))
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            CTX,
+            outcome_type="invoice_recon",
+            context={"period": "p"},
+            files={"books": ["data.csv"]},
+        )
+    )
+
+    assert out["ok"] is True
+    assert b"a,b\n1,2\n" in rec.requests[1].content
 
 
 @pytest.mark.asyncio
