@@ -76,7 +76,7 @@ export function DecisionCard({
     try {
       const next = await submitDecision(executionRunId, {
         answer,
-        decisionId: q.decision_id,
+        decisionId: q.decision_id ?? undefined,
       });
       onDone(next);
     } catch (e) {

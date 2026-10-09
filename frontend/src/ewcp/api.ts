@@ -78,7 +78,10 @@ export interface DecisionOption {
 }
 
 export interface PendingQuestion {
-  decision_id: string;
+  // null = the open seal gate: clean runs reach candidate_complete with
+  // no emitted question row, and the kernel still accepts an approval
+  // POST keyed on the run alone
+  decision_id: string | null;
   kind: string; // missing_input | option_choice | confirm_value | approval
   prompt: string;
   options: string[]; // legacy wire: labels a pane may post verbatim
