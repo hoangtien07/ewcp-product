@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 
 from deerflow_extension_api.agent_runs import AgentRunError
 
+from .deliverable_integrity import ClaimedArtifactProbe, assess_deliverable_integrity
 from .execution_run_store import ExecutionRunRecord, ExecutionRunStore
 from .run_launcher import (
     DEFAULT_RUN_RECURSION_LIMIT,
@@ -140,10 +141,11 @@ class RunRecovery:
     requests.
     """
 
-    def __init__(self, store: ExecutionRunStore, *, plugin_namespace: str = EWCP_RUNS_NAMESPACE, recursion_limit: int = DEFAULT_RUN_RECURSION_LIMIT) -> None:
+    def __init__(self, store: ExecutionRunStore, *, plugin_namespace: str = EWCP_RUNS_NAMESPACE, recursion_limit: int = DEFAULT_RUN_RECURSION_LIMIT, probe: ClaimedArtifactProbe | None = None) -> None:
         self._store = store
         self._namespace = plugin_namespace
         self._recursion_limit = recursion_limit
+        self._probe = probe
 
     # -- reads ---------------------------------------------------------------
 
@@ -302,6 +304,14 @@ class RunRecovery:
             refreshed = await self._store.get(record.execution_run_id)
             if refreshed is not None:
                 record = refreshed
+        # F2: a completed general-lane run is a self-report — verify the
+        # deliverables it claims actually exist before the row renders as
+        # clean. Advisory only; the status stays COMPLETED either way.
+        if status == ExecutionRunStatus.COMPLETED and record.integrity_flag is None:
+            if await assess_deliverable_integrity(store=self._store, record=record, state=state, probe=self._probe) is not None:
+                refreshed = await self._store.get(record.execution_run_id)
+                if refreshed is not None:
+                    record = refreshed
         return ReconciledRun(
             record=record,
             run_status=run.status,

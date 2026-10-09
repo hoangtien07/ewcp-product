@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import httpx
 
+from .deliverable_integrity import ClaimedArtifactProbe, assess_deliverable_integrity
 from .execution_run_store import TABLE_PREFIX, ExecutionRunRecord, ExecutionRunStore
 
 if TYPE_CHECKING:
@@ -481,12 +482,14 @@ class RunLauncher:
         starter: RunStarter | None = None,
         recursion_limit: int = DEFAULT_RUN_RECURSION_LIMIT,
         plugin_namespace: str = EWCP_RUNS_NAMESPACE,
+        probe: ClaimedArtifactProbe | None = None,
     ) -> None:
         self._store = store
         self._uploader = uploader
         self._starter = starter
         self._recursion_limit = recursion_limit
         self._namespace = plugin_namespace
+        self._probe = probe
 
     async def launch(
         self,
@@ -593,7 +596,21 @@ class RunLauncher:
         if status.value != record.status:
             await self._store.update_status(record.execution_run_id, status.value)
             refreshed = await self._store.get(record.execution_run_id)
-            return refreshed if refreshed is not None else record
+            if refreshed is not None:
+                record = refreshed
+        # F2: on first sight of a completed general-lane run, verify the
+        # deliverables it claims exist (advisory flag, never a status
+        # change). One extra get_state only in this case — in-flight and
+        # already-assessed rows pay nothing.
+        if status == ExecutionRunStatus.COMPLETED and record.integrity_flag is None:
+            try:
+                state = await runs.get_state(thread_id=record.thread_id)
+            except Exception:
+                state = None
+            if await assess_deliverable_integrity(store=self._store, record=record, state=state, probe=self._probe) is not None:
+                refreshed = await self._store.get(record.execution_run_id)
+                if refreshed is not None:
+                    record = refreshed
         return record
 
     async def bind_workrun(self, execution_run_id: str, workrun_id: str) -> None:

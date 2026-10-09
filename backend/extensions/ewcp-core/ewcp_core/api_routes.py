@@ -113,6 +113,7 @@ def _record_view(record) -> dict[str, Any]:
         "created_at": str(record.created_at),
         "updated_at": str(record.updated_at),
         "join_url": run_join_url(record.thread_id, record.run_id) if record.run_id else None,
+        "integrity_flag": getattr(record, "integrity_flag", None),
     }
 
 

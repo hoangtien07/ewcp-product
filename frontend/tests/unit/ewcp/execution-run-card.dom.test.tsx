@@ -117,6 +117,46 @@ describe("ExecutionRunCard", () => {
     expect(screen.getByText("Agent hoàn tất")).toBeTruthy();
   });
 
+  test("F2: claimed_artifacts_missing renders the unverified-self-report chip", () => {
+    // The run still reports completed — the chip is the honesty marker that
+    // the model's self-report could not be verified on disk.
+    render(
+      <ExecutionRunCard
+        run={{
+          ...run,
+          task_mode: "general",
+          status: "completed",
+          integrity_flag: 'claimed_artifacts_missing:["outputs/output.csv"]',
+        }}
+        active={false}
+        onSelect={rs.fn()}
+      />,
+    );
+    expect(screen.getByText("Tự báo cáo — chưa xác minh")).toBeTruthy();
+    expect(
+      screen.getByTitle("Không tìm thấy: outputs/output.csv"),
+    ).toBeTruthy();
+  });
+
+  test("F2: verified and no_claims flags render no chip", () => {
+    for (const flag of ["verified", "no_claims", null, undefined]) {
+      const { unmount } = render(
+        <ExecutionRunCard
+          run={{
+            ...run,
+            task_mode: "general",
+            status: "completed",
+            integrity_flag: flag,
+          }}
+          active={false}
+          onSelect={rs.fn()}
+        />,
+      );
+      expect(screen.queryByText("Tự báo cáo — chưa xác minh")).toBeNull();
+      unmount();
+    }
+  });
+
   test("click selects the run", () => {
     const onSelect = rs.fn();
     render(<ExecutionRunCard run={run} active={false} onSelect={onSelect} />);

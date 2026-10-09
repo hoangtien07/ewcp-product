@@ -12,6 +12,20 @@ import { lifecycleStatus, taskModeLabel } from "@/ewcp/labels";
 
 import { LifecycleBadge } from "./lifecycle-badge";
 
+const MISSING_CLAIMS_PREFIX = "claimed_artifacts_missing:";
+
+/** F2 guardrail surface — decode the advisory flag back to the claimed
+ * paths that did not verify, for the chip tooltip. */
+function missingClaims(flag: string | null | undefined): string[] | null {
+  if (!flag?.startsWith(MISSING_CLAIMS_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(flag.slice(MISSING_CLAIMS_PREFIX.length));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export function ExecutionRunCard({
   run,
   active,
@@ -21,6 +35,7 @@ export function ExecutionRunCard({
   active: boolean;
   onSelect: (run: ExecutionRun) => void;
 }) {
+  const missing = missingClaims(run.integrity_flag);
   return (
     <button
       type="button"
@@ -42,6 +57,18 @@ export function ExecutionRunCard({
               className="rounded border border-amber-500/50 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
             >
               Chờ quyết định
+            </span>
+          )}
+          {missing !== null && (
+            <span
+              title={
+                missing.length > 0
+                  ? `Không tìm thấy: ${missing.join(", ")}`
+                  : "Kết quả tự báo cáo không xác minh được trên đĩa"
+              }
+              className="rounded border border-red-500/50 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/40 dark:text-red-300"
+            >
+              Tự báo cáo — chưa xác minh
             </span>
           )}
         </span>

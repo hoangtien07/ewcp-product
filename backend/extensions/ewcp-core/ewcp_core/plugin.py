@@ -198,6 +198,7 @@ def _record_view(record: Any) -> dict[str, Any]:
         "created_by": record.created_by,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
+        "integrity_flag": getattr(record, "integrity_flag", None),
     }
 
 

@@ -56,6 +56,11 @@ export interface ExecutionRun {
   join_url: string | null;
   /** A6-07 kernel projection — only on the owner-scoped list read. */
   workrun_status?: WorkrunStatusProjection;
+  /** F2 deliverable-integrity verdict (general lane only): `verified` |
+   * `no_claims` | `claimed_artifacts_missing:[...]` — NULL while unassessed.
+   * Advisory: a missing-claims flag means the run's own report could not be
+   * verified against the sandbox outputs tree. */
+  integrity_flag?: string | null;
 }
 
 export interface EwcpIdentity {
