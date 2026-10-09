@@ -219,6 +219,7 @@ def test_build_subagent_runtime_middlewares_threads_app_config_to_llm_middleware
     # (all enabled by default).
     # + 1 ArtifactResolutionMiddleware + 1 ArtifactCaptureMiddleware
     # (tool_artifacts enabled by default, #4676).
+    # + 1 ToolArgAliasMiddleware (always-on arg-name normalization, C03).
     from deerflow.agents.middlewares.durable_context_middleware import DurableContextMiddleware
     from deerflow.agents.middlewares.dynamic_context_middleware import SubagentDateContextMiddleware
     from deerflow.agents.middlewares.knowledge_scope_middleware import KnowledgeScopeMiddleware
@@ -227,10 +228,11 @@ def test_build_subagent_runtime_middlewares_threads_app_config_to_llm_middleware
     from deerflow.agents.middlewares.skill_tool_policy_middleware import SkillToolPolicyMiddleware
     from deerflow.agents.middlewares.system_message_coalescing_middleware import SystemMessageCoalescingMiddleware
     from deerflow.agents.middlewares.token_budget_middleware import TokenBudgetMiddleware
+    from deerflow.agents.middlewares.tool_arg_alias_middleware import ToolArgAliasMiddleware
     from deerflow.agents.middlewares.tool_output_budget_middleware import ToolOutputBudgetMiddleware
     from deerflow.agents.middlewares.tool_receipt_middleware import ToolReceiptMiddleware
 
-    assert len(middlewares) == 22
+    assert len(middlewares) == 23
     assert isinstance(middlewares[0], FakeMiddleware)  # InputSanitizationMiddleware stub
     assert isinstance(middlewares[1], KnowledgeScopeMiddleware)
     assert isinstance(middlewares[2], ToolOutputBudgetMiddleware)
@@ -240,6 +242,10 @@ def test_build_subagent_runtime_middlewares_threads_app_config_to_llm_middleware
     receipt_idx = next(i for i, m in enumerate(middlewares) if isinstance(m, ToolReceiptMiddleware))
     error_idx = next(i for i, m in enumerate(middlewares) if isinstance(m, ToolErrorHandlingMiddleware))
     assert receipt_idx < error_idx
+    # Arg aliases normalize names before the audit/read-before-write policies
+    # inspect them, staying inside the receipt envelope.
+    alias_idx = next(i for i, m in enumerate(middlewares) if isinstance(m, ToolArgAliasMiddleware))
+    assert receipt_idx < alias_idx < error_idx
     # The token-budget backstop is attached by default so the cap engages (#3875).
     assert any(isinstance(m, TokenBudgetMiddleware) for m in middlewares)
     assert any(isinstance(m, SafetyFinishReasonMiddleware) for m in middlewares)

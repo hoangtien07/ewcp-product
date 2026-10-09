@@ -176,3 +176,47 @@ cd backend && uv pip install 'deerflow-harness[ollama]' --python .venv/bin/pytho
 # config.yaml diff above; boot kernel :8080 + gateway :8001 as above
 curl -X POST :8001/api/ewcp/runs -F intent='<task>' -F task_mode=general -F 'files=@orders_messy.csv'
 ```
+
+## Follow-up 2026-10-09 — arg-name alias shim + re-probe
+
+**Change:** `ToolArgAliasMiddleware` (always-on, harness layer) normalizes
+tool-call args before schema validation — `contents`/`text`/`body`/`data` →
+`content` on `write_file`; `file_path`/`filepath`/`file_name`/`filename` →
+`path` on `write_file`/`read_file`/`str_replace`. Exact-match only: a
+canonical field already present wins, the first listed alias wins, unknown
+extra args pass through untouched (still error where the schema is strict),
+and every rewrite is logged under `arg_alias_applied`. Unit tests replay the
+measured C03 payload `{"path": ..., "mode": "w", "contents": "c03-probe-42"}`
+→ normalized and dispatched.
+
+**Re-probe (same box class, `qwen2.5:7b-instruct`, embedded `DeerFlowClient`
+thread `c03-reprobe`, instruction = write `c03-reprobe-42` to
+`/mnt/user-data/workspace/probe.txt` then read it back):**
+
+```
+TC: write_file {"description": "", "path": "/mnt/user-data/workspace/probe.txt", "content": "c03-reprobe-42"}
+tool -> write_file: 'OK'
+TC: read_file {"description": "", "path": "/mnt/user-data/workspace/probe.txt"}
+tool -> read_file: 'c03-reprobe-42'
+# file on disk: c03-reprobe-42 (verified)
+```
+
+Verdict: **write_file round-trip now dispatches and executes end-to-end** —
+vs. the 2/2 validation failure above. Caveat, reported honestly: this run
+the model emitted the *canonical* `content` itself, so the alias rewrite did
+not fire (no `arg_alias_applied` line). The earlier "deterministic" drift
+was measured 2/2 through the gateway+ewcp stack (more tools, ewcp
+middlewares, different system-prompt context); determinism at temperature
+0.2 is not guaranteed across stacks. The shim's coverage of the measured
+`contents`/`mode` shape is proven at unit level; live-model exercise of the
+rewrite remains sample-dependent [not re-measured at the gateway stack].
+
+Other drift observed in the same run (out of scope, later pass): after
+completing the task the model looped on `list_uploaded_files {}` (4× until
+`LoopDetectionMiddleware` hard-stopped) and wrote an unsolicited
+`example.txt` — arg-name compat does not fix agent-loop quality. The other
+C03 blockers — clarification dodge, empty-response kill, ~5.5 t/s — are
+unchanged. Arg names still uncovered (only file r/w tools are aliased per
+scope): `mode: "w"` passes silently (pydantic ignores extras), and no alias
+exists for `old_str`/`new_str` variants on `str_replace`, nor for any
+non-file tool.

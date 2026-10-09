@@ -80,6 +80,7 @@ def core_ordering_constraints() -> tuple[OrderingConstraint, ...]:
     from deerflow.agents.middlewares.read_before_write_middleware import ReadBeforeWriteMiddleware
     from deerflow.agents.middlewares.sandbox_audit_middleware import SandboxAuditMiddleware
     from deerflow.agents.middlewares.skill_tool_policy_middleware import SkillToolPolicyMiddleware
+    from deerflow.agents.middlewares.tool_arg_alias_middleware import ToolArgAliasMiddleware
     from deerflow.agents.middlewares.tool_error_handling_middleware import ToolErrorHandlingMiddleware
     from deerflow.agents.middlewares.tool_progress_middleware import ToolProgressMiddleware
     from deerflow.agents.middlewares.tool_promotion_audit_middleware import DeferredToolPromotionAuditMiddleware
@@ -123,5 +124,13 @@ def core_ordering_constraints() -> tuple[OrderingConstraint, ...]:
                 reason="Artifact handles must resolve before argument-sensitive authorization, audit, write and progress policies inspect the call",
             )
             for policy in (GuardrailMiddleware, SandboxAuditMiddleware, ReadBeforeWriteMiddleware, ToolProgressMiddleware)
+        ),
+        *(
+            OrderingConstraint(
+                outer=ToolArgAliasMiddleware,
+                inner=policy,
+                reason="Arg-name aliases must normalize before handle resolution and argument-sensitive policies inspect the call, so aliased names cannot slip past them",
+            )
+            for policy in (ArtifactResolutionMiddleware, GuardrailMiddleware, SandboxAuditMiddleware, ReadBeforeWriteMiddleware, ToolProgressMiddleware)
         ),
     )
