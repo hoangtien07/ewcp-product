@@ -61,6 +61,10 @@ _EXECUTION_RUNS = sa.Table(
     sa.Column("created_by", sa.String(255), nullable=False),
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),
+    # F2 fabrication guardrail — deliverable-existence verdict for
+    # general-lane completions (see deliverable_integrity.py). NULL until
+    # assessed; 'verified' | 'no_claims' | 'claimed_artifacts_missing:[...]'.
+    sa.Column("integrity_flag", sa.Text, nullable=True),
     sa.UniqueConstraint("created_by", "idempotency_key", name=f"uq_{TABLE_PREFIX}execution_runs_owner_key"),
     sa.Index(f"ix_{TABLE_PREFIX}execution_runs_owner", "created_by"),
     sa.Index(f"ix_{TABLE_PREFIX}execution_runs_thread", "thread_id"),
@@ -69,6 +73,19 @@ _EXECUTION_RUNS = sa.Table(
 # pg advisory lock key for schema creation (same pattern as the host's
 # bootstrap_schema; arbitrary stable int namespaced to this extension).
 _SCHEMA_LOCK_KEY = 0x65_77_63_70  # "ewcp"
+
+
+def _bootstrap(sync_session: Any) -> None:
+    """create_all + additive column brings existing databases up to the
+    current shape — the cheap `create_all`-plus-ALTER path documented on the
+    table (a real alembic chain is only warranted once the schema *changes*
+    incompatibly)."""
+    connection = sync_session.connection()
+    _METADATA.create_all(connection)
+    existing = {c["name"] for c in sa.inspect(connection).get_columns(_EXECUTION_RUNS.name)}
+    for column in _EXECUTION_RUNS.columns:
+        if column.name not in existing:
+            connection.execute(sa.DDL(f"ALTER TABLE {_EXECUTION_RUNS.name} ADD COLUMN {column.compile(dialect=connection.dialect)}"))
 
 
 @dataclass
@@ -92,6 +109,9 @@ class ExecutionRunRecord:
     created_by: str
     created_at: float
     updated_at: float
+    # None until deliverable integrity is assessed (F2); defaults so rows
+    # read from a pre-column database still construct.
+    integrity_flag: str | None = None
 
     @classmethod
     def new(
@@ -151,7 +171,7 @@ class ExecutionRunStore:
             if dialect == "postgresql":
                 await self._with_pg_advisory_lock(session)
             else:
-                await session.run_sync(lambda s: _METADATA.create_all(s.connection()))
+                await session.run_sync(_bootstrap)
             await session.commit()
 
     async def _with_pg_advisory_lock(self, session: Any) -> None:
@@ -165,7 +185,7 @@ class ExecutionRunStore:
         else:
             raise TimeoutError("timed out acquiring ewcp_ schema advisory lock")
         try:
-            await session.run_sync(lambda s: _METADATA.create_all(s.connection()))
+            await session.run_sync(_bootstrap)
         finally:
             await session.execute(sa.text("SELECT pg_advisory_unlock(:k)"), {"k": _SCHEMA_LOCK_KEY})
 
@@ -199,6 +219,21 @@ class ExecutionRunStore:
     async def update_status(self, execution_run_id: str, status: str) -> None:
         async with self._sf() as session:
             await session.execute(sa.update(_EXECUTION_RUNS).where(_EXECUTION_RUNS.c.execution_run_id == execution_run_id).values(status=status, updated_at=time.time()))
+            await session.commit()
+
+    async def update_integrity_flag(self, execution_run_id: str, flag: str) -> None:
+        """Persist the deliverable-integrity verdict once — the WHERE NULL
+        guard makes concurrent assessments idempotent: the first persisted
+        flag wins, later writes are no-ops."""
+        async with self._sf() as session:
+            await session.execute(
+                sa.update(_EXECUTION_RUNS)
+                .where(
+                    _EXECUTION_RUNS.c.execution_run_id == execution_run_id,
+                    _EXECUTION_RUNS.c.integrity_flag.is_(None),
+                )
+                .values(integrity_flag=flag, updated_at=time.time())
+            )
             await session.commit()
 
     async def bind_workrun(self, execution_run_id: str, workrun_id: str) -> None:
