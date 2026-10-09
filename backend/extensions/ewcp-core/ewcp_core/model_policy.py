@@ -26,18 +26,31 @@ than a retry storm. The middleware is contributed with
 `intercepting=True`: only then do its exceptions propagate past the
 host's fail-open IsolatedMiddleware wrapper.
 
+GP01_EVAL F3 — transient provider quota: the same quota guard that makes
+admission errors non-retriable also matches transient per-minute 429s
+(Gemini RESOURCE_EXHAUSTED carries a RetryInfo `retryDelay` of seconds),
+sending runs to terminal `error` on a condition that clears on its own.
+This seam retries the physical provider call INSIDE the admission —
+bounded attempts, honoring the provider's delay hint — before the outer
+error handler ever classifies it. Hard-quota signals (billing/credit)
+and delays above `max_provider_delay_s` (daily resets) stay
+non-transient; auth and non-429 4xx are never retried.
+
 The synchronous model-call path cannot reach the kernel — a governed
 call there fails closed; a general call consults only the local token
-gate.
+gate. It likewise never retries (it cannot wait without blocking).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
+import re
 import threading
 import uuid
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -55,6 +68,159 @@ class PolicyUnavailable(RuntimeError):
     unreachable, unconfigured, or an unexpected admission error. Distinct
     from `BudgetDenied` (a real 402): denial is a verdict, unavailability
     is a missing verdict."""
+
+
+# ---------------------------------------------------------------------------
+# F3 — transient provider quota retry (GP01_EVAL)
+# ---------------------------------------------------------------------------
+
+#: Hard-quota signals — money-side failures that a retry cannot clear.
+#: Deliberately narrower than the host middleware's quota matcher (which
+#: includes the bare word "quota": Google's TRANSIENT RESOURCE_EXHAUSTED
+#: messages all say "Quota exceeded..."). A bare "quota" mention is NOT a
+#: hard signal; billing/insufficient_quota/credit/payment are.
+_HARD_QUOTA_PATTERNS = re.compile(
+    r"insufficient_quota|billing|credit|payment|exceeded your current quota"
+    r"|quota has been exceeded",
+    re.IGNORECASE,
+)
+
+_DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)", re.IGNORECASE)
+_RETRY_DELAY_TEXT = re.compile(r"retry[_-]?delay[\"']?\s*[:=]\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+_RETRY_IN_TEXT = re.compile(r"retry in (\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
+_STATUS_429_TEXT = re.compile(r"(?:status|code|error)[\s:='\"]+429(?!\d)")
+
+
+def _parse_duration_seconds(value: Any) -> float | None:
+    """Parse provider duration hints — '6s', '6.480s', '10h', '1m30s',
+    '250ms', or a bare number of seconds."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value) if value >= 0 else None
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    total = 0.0
+    matched = False
+    for amount, unit in _DURATION_PART.findall(text):
+        matched = True
+        total += float(amount) * {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}[unit.lower()]
+    return total if matched else None
+
+
+def _retry_delay_in(obj: Any, _depth: int = 0) -> float | None:
+    """Walk an error's structured body for a retryDelay/retryAfter field."""
+    if _depth > 5 or obj is None:
+        return None
+    if isinstance(obj, Mapping):
+        for key in ("retryDelay", "retry_delay", "retryAfter", "retry_after"):
+            if key in obj:
+                delay = _parse_duration_seconds(obj[key])
+                if delay is not None:
+                    return delay
+        return next((d for v in obj.values() if (d := _retry_delay_in(v, _depth + 1)) is not None), None)
+    if isinstance(obj, (list, tuple)):
+        return next((d for v in obj if (d := _retry_delay_in(v, _depth + 1)) is not None), None)
+    return None
+
+
+def _provider_retry_delay_seconds(exc: BaseException) -> float | None:
+    """The provider's own wait hint, when one was sent:
+    Retry-After headers (OpenAI shape), RetryInfo retryDelay in structured
+    bodies (Google shape), or a 'retryDelay'/'retry in Ns' string."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        raw = headers.get("retry-after") or headers.get("Retry-After")
+        delay = _parse_duration_seconds(raw)
+        if delay is not None:
+            return delay
+    for source in (getattr(exc, "details", None), getattr(exc, "body", None), getattr(exc, "error", None)):
+        delay = _retry_delay_in(source)
+        if delay is not None:
+            return delay
+    text = str(exc)
+    match = _RETRY_DELAY_TEXT.search(text) or _RETRY_IN_TEXT.search(text)
+    if match:
+        return _parse_duration_seconds(match.group(1))
+    return None
+
+
+def _http_status(exc: BaseException) -> int | None:
+    """Best-effort HTTP status across provider SDK shapes:
+    openai `.status_code`, google.genai `.code` (int), httpx/requests
+    `.response.status_code`, plus a bounded message-text fallback."""
+    for attr in ("status_code", "http_status", "status", "code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int) and 100 <= value <= 599:
+            return value
+        if isinstance(value, str) and value.isdigit() and 100 <= int(value) <= 599:
+            return int(value)
+    response = getattr(exc, "response", None)
+    code = getattr(response, "status_code", None)
+    if isinstance(code, int):
+        return code
+    if _STATUS_429_TEXT.search(str(exc)):
+        return 429
+    return None
+
+
+def _is_transient_quota_error(exc: BaseException, provider_delay: float | None, policy: TransientRetryPolicy) -> bool:
+    """Transient iff: HTTP 429 AND (a bounded provider wait hint OR a plain
+    rate-limit with no hard-quota signal). Billing-class 429s without a
+    delay hint and daily-reset delays (e.g. '10h') are terminal here."""
+    if _http_status(exc) != 429:
+        return False
+    if provider_delay is not None:
+        return provider_delay <= policy.max_provider_delay_s
+    return not _HARD_QUOTA_PATTERNS.search(str(exc))
+
+
+async def _noop_sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
+@dataclass(frozen=True)
+class TransientRetryPolicy:
+    """Bounded retry for transient provider 429s (F3), resolved from the
+    plugin `model_retry` block.
+
+    `max_attempts` counts ALL tries including the first (1 disables).
+    `max_provider_delay_s` is the transience bound: a provider delay above
+    it is a quota-reset horizon a run cannot wait out. `sleep` is the
+    async wait — injectable for tests; never blocks the event loop.
+    """
+
+    max_attempts: int = 4
+    base_delay_s: float = 1.0
+    max_delay_s: float = 15.0
+    max_provider_delay_s: float = 300.0
+    jitter: float = 0.25
+    sleep: Callable[[float], Awaitable[None]] = field(default=_noop_sleep, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be >= 1")
+        if self.base_delay_s < 0 or self.max_delay_s < 0 or self.max_provider_delay_s < 0:
+            raise ValueError("retry delays must be >= 0")
+
+    @classmethod
+    def resolve(cls, config: Mapping[str, Any] | None) -> TransientRetryPolicy:
+        block = (config or {}).get("model_retry") or {}
+        if not isinstance(block, Mapping):
+            raise ValueError("plugin config `model_retry` must be a mapping")
+        return cls(
+            max_attempts=int(block.get("max_attempts", 4)),
+            base_delay_s=float(block.get("base_delay_s", 1.0)),
+            max_delay_s=float(block.get("max_delay_s", 15.0)),
+            max_provider_delay_s=float(block.get("max_provider_delay_s", 300.0)),
+            jitter=float(block.get("jitter", 0.25)),
+        )
 
 
 class BudgetAdmissionClient(Protocol):
@@ -263,10 +429,12 @@ class BudgetAdmissionMiddleware(AgentMiddleware):
         budget_client: BudgetAdmissionClient,
         config: ModelPolicyConfig,
         policy: HostPolicySnapshot | None = None,
+        retry: TransientRetryPolicy | None = None,
     ) -> None:
         super().__init__()
         self._budget = budget_client
         self._config = config
+        self._retry = retry or TransientRetryPolicy()
         self._local = LocalTokenBudget(policy or HostPolicySnapshot())
 
     def _context(self, request: Any) -> Mapping[str, Any]:
@@ -299,7 +467,7 @@ class BudgetAdmissionMiddleware(AgentMiddleware):
             self._local.check(run_id, est_input, self._config.max_output_tokens_per_call)
 
         try:
-            response = await handler(request)
+            response = await self._call_with_transient_retry(handler, request, run_id)
         except BaseException:
             if admission_id is not None:
                 await self._release(admission_id, run_id)
@@ -311,6 +479,42 @@ class BudgetAdmissionMiddleware(AgentMiddleware):
         if admission_id is not None:
             await self._settle(admission_id, governed, run_id, used, reserve_tokens, reserve_usd, request)
         return response
+
+    async def _call_with_transient_retry(self, handler: Callable, request: Any, run_id: str) -> Any:
+        """Invoke the physical provider call with bounded transient-429 retry
+        (F3). The retry sits inside the admission: one reservation covers the
+        logical call, released once if every attempt fails. The provider's
+        own delay hint is honored (never shortened); absent a hint the
+        backoff decorrelates (base, ×3, capped). Non-transient errors —
+        auth, other 4xx, billing-class quota without a wait hint — raise
+        immediately. Cancellation propagates (asyncio.sleep is the only
+        wait, never a blocking call).
+        """
+        policy = self._retry
+        attempt = 0
+        backoff = policy.base_delay_s
+        while True:
+            attempt += 1
+            try:
+                return await handler(request)
+            except Exception as exc:
+                provider_delay = _provider_retry_delay_seconds(exc)
+                if attempt >= policy.max_attempts or not _is_transient_quota_error(exc, provider_delay, policy):
+                    raise
+                if provider_delay is not None:
+                    delay = provider_delay * (1 + random.uniform(0, policy.jitter))
+                else:
+                    delay = min(policy.max_delay_s, backoff) * (1 + random.uniform(-policy.jitter, policy.jitter))
+                    backoff = min(policy.max_delay_s, backoff * 3)
+                delay = max(0.0, delay)
+                logger.warning(
+                    "ewcp transient provider 429 on run %s (attempt %d/%d) — retrying in %.1fs",
+                    run_id,
+                    attempt,
+                    policy.max_attempts,
+                    delay,
+                )
+                await policy.sleep(delay)
 
     def wrap_model_call(self, request: Any, handler: Callable) -> Any:
         """Sync path: no kernel round-trip exists here — governed calls

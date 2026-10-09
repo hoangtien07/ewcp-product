@@ -18,6 +18,7 @@ Contracts pinned:
 
 from __future__ import annotations
 
+import json
 import re
 
 import httpx
@@ -30,7 +31,9 @@ from ewcp_core.execution_run_store import (
     ExecutionRunStore,
 )
 from ewcp_core.run_launcher import (
+    DEFAULT_RUN_RECURSION_LIMIT,
     EWCP_RUNS_NAMESPACE,
+    RUN_CREATE_PATH,
     RUN_JOIN_PATH,
     RUN_STREAM_EXISTING_PATH,
     RUN_STREAM_PATH,
@@ -39,6 +42,7 @@ from ewcp_core.run_launcher import (
     ExecutionRunStatus,
     FilePayload,
     FilesWithoutUploader,
+    HttpRunStarter,
     HttpThreadUploads,
     LaunchConflict,
     RunLauncher,
@@ -117,6 +121,41 @@ class FakeUploader(ThreadUploads):
     async def upload(self, *, thread_id: str, files) -> list[UploadedFileRef]:
         self.calls.append((thread_id, tuple(files)))
         return list(self.refs)
+
+
+class FakeRunStarter:
+    """RunStarter stand-in: records start/resume calls, hands out canned runs."""
+
+    def __init__(self, *, run_status: str = "running") -> None:
+        self.started: list[dict] = []
+        self.resumed: list[dict] = []
+        self.run_status = run_status
+        self._n = 0
+
+    async def start(self, *, thread_id, assistant_id=None, input=None, context=None, config=None, idempotency_key=None) -> FakeAgentRun:
+        self._n += 1
+        self.started.append(
+            {
+                "thread_id": thread_id,
+                "assistant_id": assistant_id,
+                "input": input,
+                "context": context,
+                "config": config,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return FakeAgentRun(thread_id, f"run-{self._n}", status=self.run_status)
+
+    async def resume(self, *, thread_id, resume, config=None, idempotency_key=None) -> FakeAgentRun:
+        self.resumed.append(
+            {
+                "thread_id": thread_id,
+                "resume": resume,
+                "config": config,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return FakeAgentRun(thread_id, "run-resumed", status=self.run_status)
 
 
 # ---------------------------------------------------------------------------
@@ -468,3 +507,201 @@ def test_sse_route_constants_match_upstream() -> None:
 def test_table_prefix() -> None:
     assert TABLE_PREFIX == "ewcp_"
     assert re.fullmatch(r"[a-z][a-z0-9_]*_", TABLE_PREFIX)
+
+
+# ---------------------------------------------------------------------------
+# F1 (GP01_EVAL): pane-launched runs must carry the chat UI's recursion
+# budget (`config.recursion_limit`). The bound AgentRuns.start() contract
+# cannot express run config, so admission rides the request-scoped HTTP
+# RunStarter seam — POST /api/threads/{id}/runs — with the same field the
+# UI sends. No bound seam -> documented fallback to the contract start.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_launch_via_starter_forwards_ui_recursion_limit(store) -> None:
+    """F1 red test: a launched run must carry config.recursion_limit=1000
+    (the UI's value), not the server config default (100)."""
+    runs = FakeAgentRuns()
+    starter = FakeRunStarter()
+    launcher = RunLauncher(store, starter=starter)
+
+    out = await launcher.launch(agent_runs=runs, intent="đối soát", mode=TaskMode.GENERAL, created_by="u-1")
+
+    assert len(starter.started) == 1
+    start = starter.started[0]
+    assert start["thread_id"] == out.record.thread_id
+    assert start["assistant_id"] == "lead_agent"
+    assert start["config"] == {"recursion_limit": DEFAULT_RUN_RECURSION_LIMIT}
+    assert DEFAULT_RUN_RECURSION_LIMIT == 1000  # pin: matches the chat UI value
+    assert start["idempotency_key"] == out.record.idempotency_key
+    assert out.record.run_id == "run-1"
+    # Thread creation + status reads still ride the bound contract — only
+    # run admission moved onto the HTTP seam.
+    assert len(runs.created_threads) == 1
+    assert runs.started == []
+
+
+@pytest.mark.asyncio
+async def test_launch_via_starter_honors_configured_recursion_limit(store) -> None:
+    """`general_recursion_limit` overrides the UI-matching default."""
+    starter = FakeRunStarter()
+    launcher = RunLauncher(store, starter=starter, recursion_limit=250)
+
+    await launcher.launch(agent_runs=FakeAgentRuns(), intent="x", mode=TaskMode.GENERAL, created_by="u-1")
+
+    assert starter.started[0]["config"] == {"recursion_limit": 250}
+
+
+@pytest.mark.asyncio
+async def test_crash_resume_also_carries_recursion_limit(store) -> None:
+    """The crash-resume path re-issues admission on the stored thread — it
+    must carry the same config, else it silently recreates the F1 gap."""
+    runs = FakeAgentRuns()
+    starter = FakeRunStarter()
+    launcher = RunLauncher(store, starter=starter)
+    await store.insert(
+        ExecutionRunRecord.new(
+            thread_id="thread-crash",
+            task_mode="general",
+            status=ExecutionRunStatus.LAUNCHING,
+            idempotency_key="k-crash",
+            created_by="u-1",
+            intent="đối soát",
+        )
+    )
+
+    await launcher.launch(agent_runs=runs, intent="đối soát", mode=TaskMode.GENERAL, created_by="u-1", idempotency_key="k-crash")
+
+    assert starter.started[0]["thread_id"] == "thread-crash"
+    assert starter.started[0]["config"] == {"recursion_limit": DEFAULT_RUN_RECURSION_LIMIT}
+
+
+@pytest.mark.asyncio
+async def test_launch_without_starter_falls_back_to_bound_start(store) -> None:
+    """No request-scoped HTTP seam bound -> the bound contract start remains
+    the admission path (recursion stays at the server default — the contract
+    has no config channel; documented degraded mode for requestless
+    contexts)."""
+    runs = FakeAgentRuns()
+    launcher = RunLauncher(store)
+
+    await launcher.launch(agent_runs=runs, intent="x", mode=TaskMode.GENERAL, created_by="u-1")
+
+    assert len(runs.started) == 1
+
+
+# ---------------------------------------------------------------------------
+# HttpRunStarter — real POST onto the upstream run-create route
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_http_starter_posts_run_body_with_config_and_continue() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert request.url.path == "/api/threads/t-42/runs"
+        assert request.method == "POST"
+        body = json.loads(request.content)
+        assert body["assistant_id"] == "lead_agent"
+        assert body["input"] == {"messages": [{"type": "human"}]}
+        assert body["context"] == {"kernel": {"workrun_id": "wr-1"}}
+        assert body["config"] == {"recursion_limit": 1000}
+        assert body["on_disconnect"] == "continue"
+        assert request.headers["idempotency-key"] == "k-7"
+        return httpx.Response(
+            200,
+            json={
+                "run_id": "r-9",
+                "thread_id": "t-42",
+                "assistant_id": "lead_agent",
+                "status": "running",
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://gateway.test")
+    starter = HttpRunStarter(client)
+    run = await starter.start(
+        thread_id="t-42",
+        assistant_id="lead_agent",
+        input={"messages": [{"type": "human"}]},
+        context={"kernel": {"workrun_id": "wr-1"}},
+        config={"recursion_limit": 1000},
+        idempotency_key="k-7",
+    )
+    await client.aclose()
+
+    assert len(seen) == 1
+    assert run.run_id == "r-9"
+    assert run.thread_id == "t-42"
+    assert run.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_http_starter_resume_posts_command_with_config() -> None:
+    """Resume is a run-create carrying command.resume — it needs the same
+    recursion budget (the bound contract drops config there too)."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert request.url.path == "/api/threads/t-9/runs"
+        body = json.loads(request.content)
+        assert body["command"] == {"resume": {"answer": "approve"}}
+        assert "input" not in body
+        assert body["config"] == {"recursion_limit": 1000}
+        assert body["on_disconnect"] == "continue"
+        assert request.headers["idempotency-key"] == "k-r"
+        return httpx.Response(200, json={"run_id": "r-2", "thread_id": "t-9", "assistant_id": "lead_agent", "status": "running"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://gateway.test")
+    starter = HttpRunStarter(client)
+    run = await starter.resume(thread_id="t-9", resume={"answer": "approve"}, config={"recursion_limit": 1000}, idempotency_key="k-r")
+    await client.aclose()
+
+    assert len(seen) == 1
+    assert run.run_id == "r-2"
+
+
+@pytest.mark.asyncio
+async def test_http_starter_maps_rejection_to_agent_run_error() -> None:
+    """A definitive rejection (409/4xx) must surface as AgentRunError so the
+    launcher marks the row FAILED instead of leaving it LAUNCHING."""
+    from deerflow_extension_api.agent_runs import AgentRunError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": "thread already has an active run"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://gateway.test")
+    starter = HttpRunStarter(client)
+    with pytest.raises(AgentRunError) as exc_info:
+        await starter.start(thread_id="t", input={"messages": []})
+    await client.aclose()
+
+    assert exc_info.value.status_code == 409
+    assert "active run" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_http_starter_error_never_leaks_auth_header() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"detail": "boom"})
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://gateway.test",
+        headers={"Authorization": "Bearer sekret-run-token-9"},
+    )
+    starter = HttpRunStarter(client)
+    with pytest.raises(Exception) as exc_info:
+        await starter.start(thread_id="t", input={"messages": []})
+    await client.aclose()
+    assert "sekret-run-token-9" not in str(exc_info.value)
+    assert "sekret-run-token-9" not in repr(exc_info.value)
+    assert "sekret-run-token-9" not in repr(starter)
+
+
+def test_run_create_route_constant_matches_upstream() -> None:
+    assert RUN_CREATE_PATH == "/api/threads/{thread_id}/runs"  # thread_runs.py create_run

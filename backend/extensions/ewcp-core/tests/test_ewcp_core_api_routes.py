@@ -192,7 +192,7 @@ class FakeService:
     def user_actor_binding(self) -> bool:
         return self._binding
 
-    def new_launcher(self, uploader=None):
+    def new_launcher(self, uploader=None, starter=None):
         return self._launcher
 
 

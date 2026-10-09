@@ -35,6 +35,7 @@ from .run_launcher import (
     EWCP_RUNS_NAMESPACE,
     FilePayload,
     FilesWithoutUploader,
+    HttpRunStarter,
     HttpThreadUploads,
     LaunchConflict,
     UploadsError,
@@ -143,9 +144,10 @@ class DecisionBody(BaseModel):
     decision_id: str | None = Field(default=None, max_length=200)
 
 
-def _request_scoped_uploader(request: Request) -> httpx.AsyncClient:
+def request_scoped_client(request: Request) -> httpx.AsyncClient:
     """An httpx client carrying the request's own credentials for the
-    thread-uploads hop — the caller owns it and must aclose() it."""
+    thread-uploads and run-admission hops — the caller owns it and must
+    aclose() it."""
     headers = {name: request.headers[name] for name in _FORWARDED_AUTH_HEADERS if name in request.headers}
     return httpx.AsyncClient(
         base_url=str(request.base_url).rstrip("/"),
@@ -288,10 +290,15 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
         # Governed uploads were already delivered to the kernel under
         # their slot names — they do not double as thread attachments.
         files = [] if task_mode == "governed" else uploads_by_field.get("files", [])
-        uploader_client: httpx.AsyncClient | None = None
-        if files:
-            uploader_client = _request_scoped_uploader(request)
-            launcher = service.new_launcher(HttpThreadUploads(uploader_client))
+        # F1: the bound AgentRuns.start() cannot carry run config, so the
+        # launch's run admission goes through the request-scoped HTTP seam
+        # (same route the chat UI uses) with config.recursion_limit. The
+        # bound handle still serves thread creation + status reads.
+        request_client = request_scoped_client(request)
+        launcher = service.new_launcher(
+            uploader=HttpThreadUploads(request_client) if files else None,
+            starter=HttpRunStarter(request_client),
+        )
         assert launcher is not None
         try:
             outcome = await launcher.launch(
@@ -313,8 +320,7 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
         except AgentRunError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
         finally:
-            if uploader_client is not None:
-                await uploader_client.aclose()
+            await request_client.aclose()
         return {
             "run": _record_view(outcome.record),
             "idempotent_replay": outcome.idempotent_replay,

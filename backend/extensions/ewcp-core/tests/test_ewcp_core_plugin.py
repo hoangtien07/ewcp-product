@@ -129,3 +129,19 @@ def test_status_route_never_exposes_api_key(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert resp.status_code == 200
     assert secret not in resp.text
+
+
+def test_service_resolves_general_recursion_limit() -> None:
+    """F1: `general_recursion_limit` in the plugin config overrides the
+    UI-matching default (1000); invalid/absent values fall back to it."""
+    assert EwcpCoreService(config={}).run_recursion_limit == 1000
+    assert EwcpCoreService(config={"general_recursion_limit": 250}).run_recursion_limit == 250
+    assert EwcpCoreService(config={"general_recursion_limit": "400"}).run_recursion_limit == 400
+    assert EwcpCoreService(config={"general_recursion_limit": "junk"}).run_recursion_limit == 1000
+    assert EwcpCoreService(config={"general_recursion_limit": 0}).run_recursion_limit == 1000
+    assert EwcpCoreService(config={"general_recursion_limit": -5}).run_recursion_limit == 1000
+
+
+def test_status_reports_run_recursion_limit() -> None:
+    service = EwcpCoreService(config={"general_recursion_limit": 300})
+    assert service.status()["general_recursion_limit"] == 300

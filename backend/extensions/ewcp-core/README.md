@@ -31,16 +31,26 @@ skeleton + `kernel_client.py` for the EWCP kernel reached **over HTTP**
 - `ewcp_core/model_policy.py` — `BudgetAdmissionMiddleware` at
   `Placement.MODEL_PHYSICAL` (`intercepting=True`): pre-call budget
   admission through the kernel for governed AND general runs — deny
-  before the provider is invoked. Contract: `docs/vnext/A3_BUDGET_ADMISSION.md`.
+  before the provider is invoked. Inside the admission, a bounded
+  backoff-retry (`TransientRetryPolicy`, `model_retry` block) re-issues
+  transient provider 429s honoring `retryDelay`/`Retry-After` hints —
+  hard-quota and non-429 failures stay terminal (GP01_EVAL F3).
+  Contract: `docs/vnext/A3_BUDGET_ADMISSION.md`.
 - `ewcp_core/run_launcher.py` — `RunLauncher.launch(intent, mode)`:
   `agent_runs.for_plugin("ewcp.core")` → `create_thread` → uploads
   (BEFORE `start`, through `POST /api/threads/{id}/uploads` via an
-  injected `ThreadUploads`) → `start(input, idempotency_key)` →
-  ExecutionRunMap row. Includes the Gateway SSE observation-route
-  constants, the `FileInMessage` input contract (`additional_kwargs.
-  files`), `pending_interrupt != completed` projection, and
-  crash-resume replay (same thread + same key converges through the
-  host's `extension:{ns}:{key}` dedupe).
+  injected `ThreadUploads`) → run admission → ExecutionRunMap row.
+  Run admission goes through the request-scoped `RunStarter` seam
+  (`HttpRunStarter` → `POST /api/threads/{id}/runs` on the caller's own
+  origin, same route the chat UI uses) because bound `AgentRuns.start()`
+  carries no run config — the seam forwards `config.recursion_limit`
+  (`general_recursion_limit`, default 1000 = the UI value; GP01_EVAL F1),
+  `on_disconnect: "continue"`, and the `Idempotency-Key` header; bound
+  `agent_runs` still serves thread creation and status reads. Includes
+  the Gateway SSE observation-route constants, the `FileInMessage`
+  input contract (`additional_kwargs.files`), `pending_interrupt !=
+  completed` projection, and crash-resume replay (same thread + same
+  key converges through the host's `extension:{ns}:{key}` dedupe).
 - `ewcp_core/execution_run_store.py` — ExecutionRunMap on the SHARED
   product DB: extension-owned table `ewcp_execution_runs` (private
   `MetaData`, `table_prefix: ewcp_`), created inside
@@ -110,6 +120,17 @@ plugins:
       invoke:                             # optional — capability invoke
         tenant_id: null                   # declared tenant for dev-mode kernels;
                                           # falls back to budget.tenant_id
+      general_recursion_limit: 1000       # optional — recursion budget forwarded
+                                          # as config.recursion_limit on every run
+                                          # the extension admits (launch + resume);
+                                          # default matches the chat UI
+      model_retry:                        # optional — transient provider 429 retry
+        max_attempts: 4                   # total tries incl. first (1 = off)
+        base_delay_s: 1.0                 # decorrelated backoff floor (no hint)
+        max_delay_s: 15.0                 # backoff cap
+        max_provider_delay_s: 300.0       # provider delay hints above this are
+                                          # treated as quota-reset, not retried
+        jitter: 0.25                      # +/- jitter on waits
 ```
 
 **Env-first config:** `EWCP_KERNEL_URL` / `EWCP_KERNEL_API_KEY`

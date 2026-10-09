@@ -1,5 +1,5 @@
 """ExecutionRun launcher — product-side run admission via the bound
-`AgentRuns` extension contract.
+`AgentRuns` extension contract plus a request-scoped HTTP admission seam.
 
 Flow (plan Task 2):
     launch(intent, mode)
@@ -8,11 +8,15 @@ Flow (plan Task 2):
       -> uploads POST /api/threads/{id}/uploads      (BEFORE start, via an
          injected ThreadUploads; the bound AgentRuns surface has no upload
          capability, so the caller binds a request-authenticated uploader)
-      -> start(input={messages:[human, additional_kwargs.files]},
-               idempotency_key=...)
+      -> start POST /api/threads/{id}/runs            (via an injected
+         RunStarter — bound `AgentRuns.start` has no `config` channel, so
+         run admission goes over the same HTTP route the chat UI uses and
+         carries `config.recursion_limit`; bound-contract start remains the
+         fallback when no request-scoped client exists)
       -> ExecutionRunMap row (persisted BEFORE start so a crash mid-launch
-         retains ownership — host dedupe keys `extension:{ns}:{key}` globally
-         and rejects the same key on a different thread).
+         retains ownership — the HTTP route dedupes caller keys under the
+         `http-run:` namespace, and the map's own (created_by, key) dedupe
+         replays retries onto the stored thread+key).
 
 Observation is intentionally NOT via AgentRuns: callers stream the Gateway SSE
 routes below (`RUN_STREAM_PATH`, `RUN_JOIN_PATH`, `RUN_STREAM_EXISTING_PATH`);
@@ -20,16 +24,22 @@ routes below (`RUN_STREAM_PATH`, `RUN_JOIN_PATH`, `RUN_STREAM_EXISTING_PATH`);
 consumers, with pending-interrupt != complete (a `success` run on a thread
 with pending interrupts projects to `pending_interrupt`).
 
-`on_disconnect="continue"` is asserted by the host bound impl
-(`extension_agent_runs.py:142`) on every admission path (`start` and
-`resume`); there is no parameter to pass — verified, not configurable.
+`on_disconnect="continue"` is pinned identically on both admission seams:
+the host bound impl asserts it (`extension_agent_runs.py:142`) and
+`HttpRunStarter` sends it verbatim — pane runs must survive disconnects.
+
+GP01_EVAL F1: pane runs died on GraphRecursionError because the bound
+contract silently dropped the recursion budget — launched runs inherit the
+server default (100) while the chat UI sends 1000. `RunLauncher` always
+forwards `config.recursion_limit` (default `DEFAULT_RUN_RECURSION_LIMIT`,
+operator-overridable via the plugin's `general_recursion_limit`).
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -63,12 +73,25 @@ RUN_STREAM_EXISTING_PATH = "/api/threads/{thread_id}/runs/{run_id}/stream"
 #: POST multipart upload onto a thread (routers/uploads.py:388).
 THREAD_UPLOADS_PATH = "/api/threads/{thread_id}/uploads"
 
+#: POST run admission (thread_runs.py create_run :954) — the same route the
+#: chat UI hits; carries RunCreateRequest fields the bound contract cannot
+#: express (config.recursion_limit, command.resume).
+RUN_CREATE_PATH = "/api/threads/{thread_id}/runs"
+
+#: Recursion budget forwarded on every run the extension admits (F1).
+#: Matches the chat UI's own value (frontend/src/core/threads/hooks.ts
+#: sends `config: {recursion_limit: 1000}`); the server clamps it against
+#: `max_recursion_limit`, so overshoot is safe.
+DEFAULT_RUN_RECURSION_LIMIT = 1000
+
 #: AgentRuns plugin namespace: idempotency keys are scoped
 #: `extension:ewcp.core:<key>` by the host bound impl (:143).
 EWCP_RUNS_NAMESPACE = "ewcp.core"
 
 __all__ = [
     "EWCP_RUNS_NAMESPACE",
+    "DEFAULT_RUN_RECURSION_LIMIT",
+    "RUN_CREATE_PATH",
     "RUN_STREAM_PATH",
     "RUN_JOIN_PATH",
     "RUN_STREAM_EXISTING_PATH",
@@ -79,7 +102,9 @@ __all__ = [
     "ExecutionRunStatus",
     "FilePayload",
     "FilesWithoutUploader",
+    "HttpRunStarter",
     "HttpThreadUploads",
+    "RunStarter",
     "LaunchConflict",
     "LaunchOutcome",
     "RunLauncher",
@@ -289,6 +314,122 @@ class HttpThreadUploads:
         ]
 
 
+# ---------------------------------------------------------------------------
+# Run admission — the run-create seam (F1)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class RunStarter(Protocol):
+    """Run-admission seam: create (or resume) a run on a thread.
+
+    The bound `AgentRuns.start()` contract carries no `config` field —
+    pane-launched runs would inherit the server default recursion_limit
+    (F1). `HttpRunStarter` is the production impl (caller binds an httpx
+    client carrying the request's own credentials, same discipline as
+    `HttpThreadUploads`); tests substitute fakes.
+    """
+
+    async def start(
+        self,
+        *,
+        thread_id: str,
+        assistant_id: str | None = None,
+        input: Mapping[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+        config: Mapping[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any: ...
+
+    async def resume(
+        self,
+        *,
+        thread_id: str,
+        resume: Any,
+        config: Mapping[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any: ...
+
+
+class HttpRunStarter:
+    """POST /api/threads/{id}/runs — run admission over the caller's own
+    credentials, mirroring the chat UI's request (F1).
+
+    The bound `AgentRuns` handle remains the capability gate at the route
+    (resolve_agent_runs) and still serves thread creation + status reads;
+    only the config-carrying admission call moves here. `on_disconnect`
+    is pinned to "continue" — the same value the bound impl asserts — so
+    a browser disconnect never cancels a pane run. The httpx client (and
+    its auth material) is owned by the caller; this class never inspects,
+    stores, or renders headers.
+    """
+
+    def __init__(self, client: httpx.AsyncClient, *, route: str = RUN_CREATE_PATH) -> None:
+        self._client = client
+        self._route = route
+
+    def __repr__(self) -> str:  # no client/auth material in reprs
+        return f"HttpRunStarter(route={self._route!r})"
+
+    async def start(
+        self,
+        *,
+        thread_id: str,
+        assistant_id: str | None = None,
+        input: Mapping[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+        config: Mapping[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {"input": dict(input or {}), "on_disconnect": "continue"}
+        if assistant_id:
+            body["assistant_id"] = assistant_id
+        if context:
+            body["context"] = dict(context)
+        if config:
+            body["config"] = dict(config)
+        return await self._create(thread_id=thread_id, body=body, idempotency_key=idempotency_key)
+
+    async def resume(
+        self,
+        *,
+        thread_id: str,
+        resume: Any,
+        config: Mapping[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {"command": {"resume": resume}, "on_disconnect": "continue"}
+        if config:
+            body["config"] = dict(config)
+        return await self._create(thread_id=thread_id, body=body, idempotency_key=idempotency_key)
+
+    async def _create(self, *, thread_id: str, body: dict[str, Any], idempotency_key: str | None) -> Any:
+        from deerflow_extension_api.agent_runs import AgentRun, AgentRunError
+
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else {}
+        # httpx errors (status/transport) carry the request line, never
+        # headers — safe to propagate. A JSON-rejection body maps onto
+        # AgentRunError so the launcher marks the row FAILED (definitive)
+        # instead of leaving it LAUNCHING (unknown outcome).
+        response = await self._client.post(self._route.format(thread_id=thread_id), json=body, headers=headers)
+        if response.status_code >= 400:
+            detail = "run admission rejected"
+            try:
+                payload = response.json()
+                detail = str(payload.get("detail") or payload.get("message") or detail)
+            except Exception:
+                pass
+            raise AgentRunError(response.status_code, detail)
+        payload = response.json()
+        return AgentRun(
+            thread_id=payload.get("thread_id") or thread_id,
+            run_id=payload["run_id"],
+            status=payload.get("status") or "pending",
+            assistant_id=payload.get("assistant_id"),
+            stop_reason=payload.get("stop_reason"),
+        )
+
+
 def build_run_input(intent: str, uploaded: Sequence[UploadedFileRef]) -> dict[str, Any]:
     """RunCreateRequest-compatible graph input: the upstream file contract is
     `additional_kwargs.files` on the human message (UploadsMiddleware validates
@@ -326,6 +467,10 @@ class RunLauncher:
     `uploader` (optional) is invoked strictly before `start()` when files are
     attached; construct it per request with the caller's auth (e.g.
     HttpThreadUploads over an httpx client forwarding the request headers).
+    `starter` (optional) is the run-admission seam carrying
+    `config.recursion_limit` (F1) — bind `HttpRunStarter` per request; when
+    absent the bound contract `start` is used (no config channel — the
+    documented degraded mode).
     """
 
     def __init__(
@@ -333,10 +478,14 @@ class RunLauncher:
         store: ExecutionRunStore,
         *,
         uploader: ThreadUploads | None = None,
+        starter: RunStarter | None = None,
+        recursion_limit: int = DEFAULT_RUN_RECURSION_LIMIT,
         plugin_namespace: str = EWCP_RUNS_NAMESPACE,
     ) -> None:
         self._store = store
         self._uploader = uploader
+        self._starter = starter
+        self._recursion_limit = recursion_limit
         self._namespace = plugin_namespace
 
     async def launch(
@@ -386,7 +535,7 @@ class RunLauncher:
             # thread with the same key (host dedupe yields the same run).
             thread_id = existing.thread_id
             uploaded: list[UploadedFileRef] = await self._upload(thread_id, files)
-            run = await self._admit(runs, existing.execution_run_id, thread_id, intent, uploaded, context, key)
+            run = await self._admit(runs, existing.execution_run_id, thread_id, intent, uploaded, context, key, assistant_id)
             status = await self._resolve_status(runs, thread_id, run)
             await self._store.update_admission(existing.execution_run_id, run_id=run.run_id, status=status.value)
             record = await self._store.get(existing.execution_run_id)
@@ -412,7 +561,7 @@ class RunLauncher:
                 workrun_id=workrun_id,
             )
         )
-        run = await self._admit(runs, record.execution_run_id, thread_id, intent, uploaded, context, key)
+        run = await self._admit(runs, record.execution_run_id, thread_id, intent, uploaded, context, key, assistant_id)
         status = await self._resolve_status(runs, thread_id, run)
         await self._store.update_admission(record.execution_run_id, run_id=run.run_id, status=status.value)
         record = await self._store.get(record.execution_run_id)
@@ -465,9 +614,21 @@ class RunLauncher:
         uploaded: Sequence[UploadedFileRef],
         context: dict[str, Any] | None,
         key: str,
+        assistant_id: str,
     ) -> AgentRun:
         input_ = build_run_input(intent, uploaded)
         try:
+            if self._starter is not None:
+                # F1: the bound contract start() cannot carry run config —
+                # admit over HTTP so the run gets the UI's recursion budget.
+                return await self._starter.start(
+                    thread_id=thread_id,
+                    assistant_id=assistant_id,
+                    input=input_,
+                    context=context,
+                    config={"recursion_limit": self._recursion_limit},
+                    idempotency_key=key,
+                )
             return await runs.start(thread_id=thread_id, input=input_, context=context, idempotency_key=key)
         except Exception as exc:
             from deerflow_extension_api.agent_runs import AgentRunError

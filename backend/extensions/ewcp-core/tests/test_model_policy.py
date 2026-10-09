@@ -30,6 +30,7 @@ from ewcp_core.model_policy import (
     KernelBudgetClient,
     ModelPolicyConfig,
     PolicyUnavailable,
+    TransientRetryPolicy,
 )
 
 
@@ -460,3 +461,206 @@ async def test_kernel_budget_client_unconfigured_raises_policy_unavailable() -> 
 
     with pytest.raises(PolicyUnavailable):
         await adapter.admit(tenant_id=None, execution_run_id="r", cap_usd=Decimal("1"), reserve_usd=Decimal("0.1"), idempotency_key="k")
+
+
+# -- F3 (GP01_EVAL): transient provider 429/quota retry -------------------------
+#
+# The host error middleware classifies quota-matching errors as non-retriable
+# (its auth/quota guard), so a per-minute RPM 429 surfaces as a terminal
+# fallback and the run dies. This seam retries the physical provider call —
+# inside the same admission — when the provider itself says to wait.
+
+
+class _ProviderError(Exception):
+    """Provider-shaped exception: status_code attr + optional response/body."""
+
+    def __init__(self, *, status_code: int | None = None, message: str = "", headers: dict | None = None, body: dict | None = None) -> None:
+        super().__init__(message or f"provider error {status_code}")
+        self.status_code = status_code
+        self.response = SimpleNamespace(status_code=status_code, headers=headers or {}) if status_code is not None else None
+        self.body = body
+
+
+class _FlakyHandler:
+    """Fails `failures` times with `error`, then returns the canned result."""
+
+    def __init__(self, error: BaseException, *, failures: int, result: Any = None) -> None:
+        self.calls = 0
+        self._error = error
+        self._failures = failures
+        self._result = result if result is not None else ModelResponse(result=[AIMessage(content="ok")])
+
+    async def __call__(self, request: Any) -> Any:
+        self.calls += 1
+        if self.calls <= self._failures:
+            raise self._error
+        return self._result
+
+
+class _SleepRecorder:
+    """asyncio.sleep stand-in: records requested delays without waiting."""
+
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+
+
+def _quota_429(*, retry_delay: str | None = None, retry_after: str | None = None, message: str = "quota exceeded for metric") -> _ProviderError:
+    """Gemini-shaped 429: RESOURCE_EXHAUSTED with an optional RetryInfo."""
+    body = None
+    if retry_delay is not None:
+        body = {
+            "error": {
+                "code": 429,
+                "message": message,
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}],
+            }
+        }
+    headers = {"retry-after": retry_after} if retry_after is not None else {}
+    return _ProviderError(status_code=429, message=message, headers=headers, body=body)
+
+
+@pytest.mark.asyncio
+async def test_transient_429_retries_once_then_succeeds() -> None:
+    """429 carrying the provider's retryDelay is transient — the call is
+    retried after the hinted delay instead of dying as a quota error."""
+    budget = _FakeBudgetClient()
+    sleep = _SleepRecorder()
+    handler = _FlakyHandler(_quota_429(retry_delay="6s", message="RESOURCE_EXHAUSTED"), failures=1, result=_used_response())
+    middleware = BudgetAdmissionMiddleware(budget, _config(), HostPolicySnapshot(), retry=TransientRetryPolicy(sleep=sleep))
+
+    result = await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+
+    assert result is handler._result
+    assert handler.calls == 2
+    # The provider's 6s hint (± jitter) — never an unbounded wait.
+    assert len(sleep.calls) == 1
+    assert 4.0 <= sleep.calls[0] <= 8.0
+    # One admission covers the whole logical call: settled once, no release.
+    assert len(budget.admits) == 1
+    assert len(budget.settles) == 1
+    assert budget.releases == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_429_fails_after_attempt_cap() -> None:
+    """Transient hints don't make a dead quota infinite — after the attempt
+    cap the original provider error propagates and the reservation frees."""
+    budget = _FakeBudgetClient()
+    sleep = _SleepRecorder()
+    handler = _FlakyHandler(_quota_429(retry_delay="6s", message="RESOURCE_EXHAUSTED"), failures=99)
+    middleware = BudgetAdmissionMiddleware(budget, _config(), HostPolicySnapshot(), retry=TransientRetryPolicy(max_attempts=4, sleep=sleep))
+
+    with pytest.raises(_ProviderError):
+        await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+
+    assert handler.calls == 4
+    assert len(sleep.calls) == 3
+    assert budget.releases == ["adm-1"]
+    assert budget.settles == []
+
+
+@pytest.mark.asyncio
+async def test_non_transient_4xx_never_retries() -> None:
+    """Auth and other non-429 4xx must not be retried — they never clear."""
+    for status in (400, 401, 403, 404):
+        handler = _FlakyHandler(_ProviderError(status_code=status), failures=10)
+        middleware = BudgetAdmissionMiddleware(_FakeBudgetClient(), _config(), HostPolicySnapshot(), retry=TransientRetryPolicy(sleep=_SleepRecorder()))
+        with pytest.raises(_ProviderError):
+            await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+        assert handler.calls == 1, f"status {status} must not retry"
+
+
+@pytest.mark.asyncio
+async def test_hard_quota_429_without_delay_never_retries() -> None:
+    """insufficient_quota / billing 429s carry no retry hint — a dead credit
+    line is not a transient condition (retrying only burns attempts)."""
+    handler = _FlakyHandler(_ProviderError(status_code=429, message="insufficient_quota: exceeded your current quota, please check your plan and billing details"), failures=10)
+    middleware = BudgetAdmissionMiddleware(_FakeBudgetClient(), _config(), HostPolicySnapshot(), retry=TransientRetryPolicy(sleep=_SleepRecorder()))
+    with pytest.raises(_ProviderError):
+        await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+    assert handler.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_delay_above_cap_is_not_transient() -> None:
+    """A retryDelay in the hours (daily-quota reset) is not a condition a
+    run can wait out — fail fast instead of parking the run."""
+    handler = _FlakyHandler(_quota_429(retry_delay="10h"), failures=10)
+    middleware = BudgetAdmissionMiddleware(
+        _FakeBudgetClient(),
+        _config(),
+        HostPolicySnapshot(),
+        retry=TransientRetryPolicy(max_provider_delay_s=300.0, sleep=_SleepRecorder()),
+    )
+    with pytest.raises(_ProviderError):
+        await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+    assert handler.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_after_header_delay_is_respected() -> None:
+    """OpenAI-style Retry-After headers carry the same hint."""
+    sleep = _SleepRecorder()
+    handler = _FlakyHandler(_quota_429(retry_after="7"), failures=1, result=_used_response())
+    middleware = BudgetAdmissionMiddleware(_FakeBudgetClient(), _config(), HostPolicySnapshot(), retry=TransientRetryPolicy(sleep=sleep))
+    await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+    assert handler.calls == 2
+    assert len(sleep.calls) == 1 and 5.0 <= sleep.calls[0] <= 9.0
+
+
+@pytest.mark.asyncio
+async def test_429_without_hint_uses_bounded_backoff() -> None:
+    """A bare 429 (no provider hint) retries on computed backoff, bounded."""
+    sleep = _SleepRecorder()
+    handler = _FlakyHandler(_quota_429(), failures=2, result=_used_response())
+    middleware = BudgetAdmissionMiddleware(_FakeBudgetClient(), _config(), HostPolicySnapshot(), retry=TransientRetryPolicy(base_delay_s=1.0, sleep=sleep))
+    await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+    assert handler.calls == 3
+    assert len(sleep.calls) == 2
+    assert all(0 < d <= 15.0 for d in sleep.calls)
+
+
+@pytest.mark.asyncio
+async def test_max_attempts_one_disables_retry() -> None:
+    handler = _FlakyHandler(_quota_429(retry_delay="6s"), failures=10)
+    middleware = BudgetAdmissionMiddleware(_FakeBudgetClient(), _config(), HostPolicySnapshot(), retry=TransientRetryPolicy(max_attempts=1, sleep=_SleepRecorder()))
+    with pytest.raises(_ProviderError):
+        await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+    assert handler.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_5xx_is_not_retried_at_this_seam() -> None:
+    """Non-quota server errors already retry at the host's outer error
+    middleware — this seam owns only the transient-429 gap."""
+    handler = _FlakyHandler(_ProviderError(status_code=503), failures=10)
+    middleware = BudgetAdmissionMiddleware(_FakeBudgetClient(), _config(), HostPolicySnapshot(), retry=TransientRetryPolicy(sleep=_SleepRecorder()))
+    with pytest.raises(_ProviderError):
+        await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+    assert handler.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_non_provider_exception_never_retries() -> None:
+    handler = _FlakyHandler(RuntimeError("boom"), failures=10)
+    middleware = BudgetAdmissionMiddleware(_FakeBudgetClient(), _config(), HostPolicySnapshot(), retry=TransientRetryPolicy(sleep=_SleepRecorder()))
+    with pytest.raises(RuntimeError, match="boom"):
+        await middleware.awrap_model_call(_request(context=GENERAL_CTX), handler)
+    assert handler.calls == 1
+
+
+def test_transient_retry_policy_resolve_reads_model_retry_block() -> None:
+    policy = TransientRetryPolicy.resolve({"model_retry": {"max_attempts": 5, "base_delay_s": 2.0, "max_delay_s": 30.0, "max_provider_delay_s": 120.0}})
+    assert policy.max_attempts == 5
+    assert policy.base_delay_s == 2.0
+    assert policy.max_provider_delay_s == 120.0
+
+
+def test_transient_retry_policy_resolve_defaults() -> None:
+    policy = TransientRetryPolicy.resolve({})
+    assert policy.max_attempts == 4
+    assert policy.max_provider_delay_s > 0
