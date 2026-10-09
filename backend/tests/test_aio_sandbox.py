@@ -2661,6 +2661,110 @@ class TestReadFile:
         )
 
 
+def _aio_error_body(*, error_type: str, exception_type: str | None = None, errno_name: str | None = None, message: str = "boom") -> dict:
+    """The AIO `v1/file/read` `success:false` error envelope (docs:
+    website/docs/en/guide/basic/file.mdx in agent-infra/sandbox)."""
+    data = {
+        "path": "/mnt/user-data/uploads/data.xlsx",
+        "operation": "read",
+        "message": message,
+        "error_type": error_type,
+        "retryable": False,
+    }
+    if exception_type is not None:
+        data["exception_type"] = exception_type
+    if errno_name is not None:
+        data["errno_name"] = errno_name
+    return {"success": False, "message": message, "data": data}
+
+
+def _sdk_parse_error(body: dict):
+    """Reproduce the exact crash the agent_sandbox SDK hits on an AIO
+    `success:false` envelope: typed ResponseFileReadResult requires
+    `data.content`/`data.file`, which the error body never carries."""
+    import pydantic
+    from agent_sandbox.core.pydantic_utilities import parse_obj_as
+    from agent_sandbox.types.response_file_read_result import ResponseFileReadResult
+
+    try:
+        parse_obj_as(ResponseFileReadResult, body)
+    except pydantic.ValidationError as exc:
+        return exc
+    raise AssertionError("the error envelope unexpectedly validated as a success body")
+
+
+class TestReadFileErrorEnvelope:
+    """AIO reports filesystem failures as HTTP 200 `success:false`
+    envelopes that crash the SDK's typed parse — the adapter recovers the
+    structured error via a raw re-request and re-raises the builtin
+    exception `read_file_tool` renders designed messages for (GP-01)."""
+
+    def test_decode_error_envelope_raises_unicode_decode_error(self, sandbox):
+        body = _aio_error_body(
+            error_type="decode_error",
+            exception_type="UnicodeDecodeError",
+            message="'utf-8' codec can't decode byte 0x82 in position 9: invalid start byte",
+        )
+        sandbox._client.file.read_file = MagicMock(side_effect=_sdk_parse_error(body))
+        sandbox._client._client_wrapper.httpx_client.request = MagicMock(return_value=SimpleNamespace(json=lambda: body))
+
+        with pytest.raises(UnicodeDecodeError):
+            sandbox.read_file("/mnt/user-data/uploads/data.xlsx")
+
+        request = sandbox._client._client_wrapper.httpx_client.request
+        request.assert_called_once()
+        assert request.call_args.args == ("v1/file/read",)
+        assert request.call_args.kwargs["method"] == "POST"
+        assert request.call_args.kwargs["json"] == {"file": "/mnt/user-data/uploads/data.xlsx"}
+
+    def test_decode_error_envelope_preserves_line_range_on_reissue(self, sandbox):
+        body = _aio_error_body(error_type="decode_error", exception_type="UnicodeDecodeError")
+        sandbox._client.file.read_file = MagicMock(side_effect=_sdk_parse_error(body))
+        sandbox._client._client_wrapper.httpx_client.request = MagicMock(return_value=SimpleNamespace(json=lambda: body))
+
+        with pytest.raises(UnicodeDecodeError):
+            sandbox.read_file("/mnt/user-data/uploads/data.xlsx", start_line=1, end_line=10)
+
+        request = sandbox._client._client_wrapper.httpx_client.request
+        assert request.call_args.kwargs["json"] == {"file": "/mnt/user-data/uploads/data.xlsx", "start_line": 0, "end_line": 10}
+
+    def test_not_found_envelope_raises_file_not_found(self, sandbox):
+        body = _aio_error_body(error_type="not_found", exception_type="FileNotFoundError", errno_name="ENOENT", message="No such file")
+        sandbox._client.file.read_file = MagicMock(side_effect=_sdk_parse_error(body))
+        sandbox._client._client_wrapper.httpx_client.request = MagicMock(return_value=SimpleNamespace(json=lambda: body))
+
+        with pytest.raises(FileNotFoundError):
+            sandbox.read_file("/mnt/user-data/uploads/missing.txt")
+
+    def test_permission_envelope_maps_errno(self, sandbox):
+        body = _aio_error_body(error_type="permission_denied", exception_type="PermissionError", errno_name="EACCES", message="denied")
+        sandbox._client.file.read_file = MagicMock(side_effect=_sdk_parse_error(body))
+        sandbox._client._client_wrapper.httpx_client.request = MagicMock(return_value=SimpleNamespace(json=lambda: body))
+
+        with pytest.raises(PermissionError):
+            sandbox.read_file("/root/secret")
+
+    def test_api_error_with_structured_body_maps_too(self, sandbox):
+        from agent_sandbox.core.api_error import ApiError
+
+        body = _aio_error_body(error_type="invalid_target", exception_type="IsADirectoryError", errno_name="EISDIR", message="is a directory")
+        sandbox._client.file.read_file = MagicMock(side_effect=ApiError(status_code=200, headers={}, body=body))
+
+        with pytest.raises(IsADirectoryError):
+            sandbox.read_file("/mnt/user-data/uploads")
+
+    def test_unparseable_error_still_reports_readably(self, sandbox):
+        """When the recovery request itself fails, the model still gets a
+        plain error string — never a raw pydantic crash."""
+        from deerflow.sandbox.exceptions import SandboxError
+
+        sandbox._client.file.read_file = MagicMock(side_effect=_sdk_parse_error(_aio_error_body(error_type="decode_error")))
+        sandbox._client._client_wrapper.httpx_client.request = MagicMock(side_effect=RuntimeError("connection reset"))
+
+        with pytest.raises(SandboxError, match="could not parse"):
+            sandbox.read_file("/mnt/user-data/uploads/data.xlsx")
+
+
 class TestWriteFile:
     def test_append_uses_server_append_without_pre_read(self, sandbox):
         sandbox._client.file.read_file = MagicMock(side_effect=RuntimeError("read timed out"))
