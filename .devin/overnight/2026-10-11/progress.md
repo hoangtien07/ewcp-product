@@ -16,3 +16,4 @@ Window: ~7h from 2026-10-10 ~19:00 UTC (≈08:30 ICT 2026-10-11). Lead: parent s
 - 20:20 UTC W3 done: PR #72 (N03 taxonomy + arg-drift feedback middleware). Parent verified: observational-only patch, red->green SHAs confirmed, CI 11/11. Verdict PASS.
 - 20:45 UTC W4 done: PR #73 (N04). Real dishonesty found+fixed: mid-run SSE drop froze pane on stale status; now marked stream-lost. Parent verified diff minimal+product-owned. Verdict PASS.
 - 21:00 UTC W5 done: kernel PR #146 (N05). Real STALE-SILENT gap patched fail-closed at SqliteStore funnel — post-seal manifested state immutable, manifest replace rejected (idempotent same-hash allowed). Parent verified: tightening only, unmanifested bookkeeping writable. Verdict PASS.
+- 21:15 UTC W7 done: kernel PR #147 (N09 dossier, docs-only). Model-axis verdict NO-GO today; cheapest unblock = CF Workers AI creds. Verdict PASS.
