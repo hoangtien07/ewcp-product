@@ -130,8 +130,9 @@ def _capability_summary(item: Mapping[str, Any]) -> dict[str, Any]:
 async def _execution_run_id(deps: InvokeDeps, ctx: Mapping[str, Any]) -> str | None:
     """Bind the invocation to the caller's execution run (contract field
     `execution_run_id`) so the kernel budget ledger joins it with the
-    run's model/budget admissions — same identity precedence as
-    model_policy._identity: governed workrun first, then the product
+    run's model/budget admissions — the governed workrun first (context
+    stamp left by the egress stamp pass; budget admission resolves the
+    same binding from the ExecutionRunMap directly), then the product
     ExecutionRun record for this thread/run, then the raw run_id."""
     kernel_ctx = ctx.get("kernel")
     if isinstance(kernel_ctx, Mapping) and kernel_ctx.get("workrun_id"):

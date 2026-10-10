@@ -188,12 +188,38 @@ Modes: `local_only` (model endpoint must be loopback/private/declared;
 no egress-capable tools; sandbox isolated or no-egress-path),
 `restricted` (endpoints/tools bounded by allowlists; sandbox isolated
 or allowlist+`approval: deny`), `approved_cloud` (endpoints must be in
-`approved_model_endpoints`; tools unrestricted). Tenants resolve from
-`runtime.context["ewcp_tenant_id"]` falling back to `user_id`;
-`ewcp_egress_mode` context overrides per-run. Unknown tenants are
-`sensitive` under `default_mode` (fail-closed). `non_sensitive` tenants
-— built-in `demo`/`default` plus `tenant_classes` — run unmodified,
-matching kernel `DataEgressPolicy` semantics.
+`approved_model_endpoints` or carried by a provider configured in
+`models:` — the config-driven provider list, never a wildcard; tools
+unrestricted). Tenants resolve from `runtime.context["ewcp_tenant_id"]`,
+which the middleware stamps server-side from the configured deployment
+tenant (`tenant_id` → `invoke.tenant_id` → `budget.tenant_id`), falling
+back to `user_id` when none is configured. Client-supplied
+`ewcp_tenant_id`, `ewcp_egress_mode`, and `kernel` context keys are
+dropped at every hook — `body.config['context']` reaches the runtime
+verbatim, so trusting them would let any run claim a non_sensitive
+tenant, a looser mode, or a forged governed identity. The legitimate
+`kernel.workrun_id` is then re-stamped from server-owned state — the
+ExecutionRunMap binding the governed launch path (api_routes →
+RunLauncher admission) wrote for this thread/run — feeding the egress
+checks and the invoke lane's run binding. Budget admission does NOT
+read the stamp: `BudgetAdmissionMiddleware` resolves tenant via
+`tenant_id_getter` and workrun via `store_getter` →
+`ExecutionRunStore.list_for_thread` directly, because it runs OUTER of
+this stamp pass at `MODEL_PHYSICAL` — a forge reaches it un-defended.
+When the map is unreadable the identity is unverifiable: a configured
+`cap_usd` fails closed (`AdmissionError`), no cap degrades to general.
+Invocation rows (`task_mode=invoke`) never stamp, matching
+`invoke_tools._execution_run_id`'s exclusion. Unknown tenants
+are `sensitive` under `default_mode` (fail-closed). `non_sensitive`
+tenants — built-in `demo`/`default` plus `tenant_classes` — run
+unmodified, matching kernel `DataEgressPolicy` semantics.
+
+Model endpoint resolution (F1): the provider endpoint is resolved from
+the model's endpoint attributes, its `client`/`async_client` objects
+(including the google-genai SDK chain `_api_client._http_options.base_url`,
+which carries `generativelanguage.googleapis.com` by default and any
+operator-pinned `base_url=`/`client_args` override), and `model_kwargs`.
+Unprovable endpoints deny fail-closed.
 
 Kernel-bound tools: `ewcp_invoke` / `ewcp_capabilities` carry no `url`
 arg — their wire destination is the configured `kernel_url`. The tool
