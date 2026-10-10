@@ -97,11 +97,14 @@ def run_task(model, task: dict[str, Any], max_turns: int = MAX_TOOL_TURNS) -> di
     bound = model.bind_tools(list(TOOLS.values())) if task.get("use_tool") else model
 
     inference_calls = 0
+    usage_calls = 0
     tool_calls_total = 0
     tool_calls_ok = 0
     in_tokens = out_tokens = 0
     # A provider that never reports usage must surface "unmeasured", not a
     # fabricated 0 — track observation per field, never the accumulated sum.
+    # Coverage is per CALL: a task where some calls report usage and some do
+    # not is a partial sample, not a measurement.
     in_seen = out_seen = False
     latencies: list[int] = []
     failure_cause: str | None = None
@@ -120,12 +123,17 @@ def run_task(model, task: dict[str, Any], max_turns: int = MAX_TOOL_TURNS) -> di
         latencies.append(latency_ms)
         inference_calls += 1
         usage = response.usage_metadata or {}
+        call_observed = False
         if usage.get("input_tokens") is not None:
             in_seen = True
             in_tokens += int(usage["input_tokens"])
+            call_observed = True
         if usage.get("output_tokens") is not None:
             out_seen = True
             out_tokens += int(usage["output_tokens"])
+            call_observed = True
+        if call_observed:
+            usage_calls += 1
         messages.append(response)
 
         final_text = str(response.content or "")
@@ -153,6 +161,12 @@ def run_task(model, task: dict[str, Any], max_turns: int = MAX_TOOL_TURNS) -> di
 
     # Correctness on the LAST text produced (any turn) for completion credit.
     correct = bool(re.search(task["expect_regex"], final_text)) if final_text else False
+    if usage_calls == 0:
+        usage_call_coverage = "none"
+    elif usage_calls == inference_calls:
+        usage_call_coverage = "full"
+    else:
+        usage_call_coverage = "partial"
     return {
         "id": task["id"],
         "completed": completed,
@@ -161,6 +175,8 @@ def run_task(model, task: dict[str, Any], max_turns: int = MAX_TOOL_TURNS) -> di
         "tool_calls": tool_calls_total,
         "tool_call_success": tool_calls_ok,
         "inference_calls": inference_calls,
+        "usage_calls": usage_calls,
+        "usage_call_coverage": usage_call_coverage,
         "input_tokens": in_tokens if in_seen else None,
         "output_tokens": out_tokens if out_seen else None,
         "latency_ms": sum(latencies),
@@ -175,8 +191,10 @@ def summarize(results: list[dict[str, Any]], wall_ms: int, parallel: int) -> dic
     # null (with a coverage marker) when unmeasured, never a silent 0.
     in_measured = [r for r in results if r.get("input_tokens") is not None]
     out_measured = [r for r in results if r.get("output_tokens") is not None]
-    fully_measured = bool(results) and len(in_measured) == len(results) and len(out_measured) == len(results)
-    coverage = "measured" if fully_measured else ("partial" if (in_measured or out_measured) else "unmeasured")
+    calls_with_usage = sum(r["usage_calls"] for r in results)
+    total_calls = sum(r["inference_calls"] for r in results)
+    fully_measured = bool(results) and total_calls > 0 and calls_with_usage == total_calls and len(in_measured) == len(results) and len(out_measured) == len(results)
+    coverage = "measured" if fully_measured else ("partial" if calls_with_usage else "unmeasured")
     return {
         "tasks": len(results),
         "parallel_workers": parallel,
@@ -186,7 +204,8 @@ def summarize(results: list[dict[str, Any]], wall_ms: int, parallel: int) -> dic
         "correct_rate": sum(r["correct"] for r in results) / n,
         "first_pass_correct_rate": sum(r["first_pass_correct"] for r in results) / n,
         "tool_call_success_rate": (sum(r["tool_call_success"] for r in results) / max(1, sum(r["tool_calls"] for r in results))),
-        "total_inference_calls": sum(r["inference_calls"] for r in results),
+        "total_inference_calls": total_calls,
+        "calls_with_usage": calls_with_usage,
         "total_input_tokens": sum(r["input_tokens"] for r in in_measured) if in_measured else None,
         "total_output_tokens": sum(r["output_tokens"] for r in out_measured) if out_measured else None,
         "token_usage_coverage": coverage,
