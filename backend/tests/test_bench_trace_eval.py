@@ -22,9 +22,7 @@ from benchmark.trace_eval.evaluator import (  # noqa: E402
     load_cases,
 )
 
-FIXTURES = (
-    Path(__file__).parent.parent / "scripts" / "benchmark" / "trace_eval" / "fixtures"
-)
+FIXTURES = Path(__file__).parent.parent / "scripts" / "benchmark" / "trace_eval" / "fixtures"
 
 
 @pytest.fixture(scope="module")
@@ -82,10 +80,7 @@ def test_evaluator_assertions_all_pass_on_committed_fixtures(fixture_results):
     """Every committed fixture's expected verdict matches — a wrong trace
     grades task_passed=false AND evaluator_assertions_passed=true; the
     golden controls grade task_passed=true."""
-    bad = [
-        cid for cid, r in fixture_results.items()
-        if r["evaluator_assertions_passed"] is not True
-    ]
+    bad = [cid for cid, r in fixture_results.items() if r["evaluator_assertions_passed"] is not True]
     assert bad == []
 
 
@@ -111,9 +106,7 @@ def test_wrong_trace_fails_task_but_passes_evaluation(tmp_path):
         "run_status": "success",
         "terminal": True,
         "required_artifacts": [{"path": "outputs/x.md", "sha256": "a" * 64}],
-        "produced_artifacts": [
-            {"path": "outputs/x.md", "sha256": "a" * 64, "size": 10}
-        ],
+        "produced_artifacts": [{"path": "outputs/x.md", "sha256": "a" * 64, "size": 10}],
         "contract": None,
         "human_acceptance": None,
         "expect": {"task_passed": True},

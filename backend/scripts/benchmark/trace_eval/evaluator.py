@@ -1,0 +1,230 @@
+"""Offline acceptance evaluator — grades POSTCONDITION, not ``status=success``.
+
+Reads canned run traces (JSONL) and grades each case against the spec's
+acceptance schema. No network, no provider, no live model — every verdict
+is derived from facts recorded in the trace itself.
+
+Grading semantics (spec EWCP_DEVIN_OVERNIGHT_V2_2026-10-11 §N02):
+
+- ``task_finished`` — the trace declares the run terminal.
+- ``artifact_observed`` — every ``required_artifacts`` entry is matched by a
+  produced artifact at the same path with ``size > 0`` and, when the
+  requirement declares a ``sha256``, a matching digest. A produced artifact
+  without a digest cannot verify against a declared one — unobserved.
+- ``acceptance_verified`` — for contract-bound lanes (``contract`` recorded
+  in the trace) the kernel verdict must be ``"pass"`` AND ``sealed``; for
+  the general lane (no contract exists) the artifact postcondition IS the
+  acceptance check — there is no second gate to trust.
+- ``human_accepted`` — the recorded acceptance event's verdict, or null.
+  Absent an event it is never inferred.
+- ``oracle`` — the run's self-reported status, verbatim. It is evidence
+  about what the run CLAIMED, never a pass condition.
+- ``task_passed`` = task_finished AND artifact_observed AND
+  acceptance_verified.
+- ``evaluator_assertions_passed`` — the computed verdict matches the case's
+  declared ``expect.task_passed`` (the evaluator's own oracle check: a
+  wrong trace must grade task_passed=false AND this field true).
+
+Result schema (every field always emitted):
+``{case_id, base_sha, candidate_sha, lane, evidence_tier, provider,
+task_finished, artifact_observed, acceptance_verified, human_accepted,
+oracle, task_passed, evaluator_assertions_passed, llm_calls,
+estimated_cost_usd, actual_spend_usd, cost_coverage, limitations}``
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+
+EVIDENCE_TIER_TRACE_REPLAY = "TRACE_REPLAY"
+EVIDENCE_TIERS = ("TRACE_REPLAY", "RUNTIME_E2E", "LIVE_MODEL")
+
+REQUIRED_RESULT_KEYS = frozenset(
+    {
+        "case_id",
+        "base_sha",
+        "candidate_sha",
+        "lane",
+        "evidence_tier",
+        "provider",
+        "task_finished",
+        "artifact_observed",
+        "acceptance_verified",
+        "human_accepted",
+        "oracle",
+        "task_passed",
+        "evaluator_assertions_passed",
+        "llm_calls",
+        "estimated_cost_usd",
+        "actual_spend_usd",
+        "cost_coverage",
+        "limitations",
+    }
+)
+
+REQUIRED_CASE_KEYS = frozenset(
+    {
+        "case_id",
+        "lane",
+        "provider",
+        "run_status",
+        "terminal",
+        "required_artifacts",
+        "produced_artifacts",
+        "expect",
+    }
+)
+
+EVALUATOR_LIMITATION = "trace replay grades facts recorded in the trace — a trace that omits its own events is undetectable at this tier"
+
+
+def git_revision() -> str:
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short=10", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
+        return "unknown"
+
+
+def load_cases(path: Path | str) -> list[dict[str, Any]]:
+    """Read a JSONL case file. Blank lines are skipped; each line must be a
+    complete case object (no streaming/concatenated JSON)."""
+    cases: list[dict[str, Any]] = []
+    with open(path, encoding="utf-8") as fh:
+        for lineno, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line:
+                continue
+            case = json.loads(line)
+            case["_lineno"] = lineno
+            cases.append(case)
+    return cases
+
+
+def _artifact_observed(required: list[dict[str, Any]], produced: list[dict[str, Any]]) -> bool:
+    """Every required artifact must be produced at the same path, non-empty,
+    and digest-equal when the requirement declares one."""
+    by_path = {p.get("path"): p for p in produced}
+    for req in required:
+        prod = by_path.get(req.get("path"))
+        if prod is None:
+            return False
+        if not isinstance(prod.get("size"), int) or prod["size"] <= 0:
+            return False
+        want = req.get("sha256")
+        if want is not None and prod.get("sha256") != want:
+            return False
+    return True
+
+
+def _acceptance_verified(case: dict[str, Any], artifact_observed: bool) -> bool:
+    """Contract-bound lanes trust the recorded kernel verdict + seal; the
+    general lane has no contract — its artifact postcondition is the only
+    acceptance signal that exists."""
+    contract = case.get("contract")
+    if contract is None:
+        return artifact_observed
+    return contract.get("verdict") == "pass" and contract.get("sealed") is True
+
+
+def _cost_coverage(cost: dict[str, Any] | None) -> str:
+    if not isinstance(cost, dict):
+        return "none"
+    if cost.get("actual_usd") is not None:
+        return "measured"
+    if cost.get("estimated_usd") is not None:
+        return "estimated_only"
+    return "none"
+
+
+def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
+    missing_keys = REQUIRED_CASE_KEYS - set(case)
+    limitations = list(case.get("limitations") or [])
+    if EVALUATOR_LIMITATION not in limitations:
+        limitations.append(EVALUATOR_LIMITATION)
+    if missing_keys:
+        limitations.append(f"malformed case: missing keys {sorted(missing_keys)}")
+        return {
+            "case_id": case.get("case_id", f"line:{case.get('_lineno', '?')}"),
+            "base_sha": case.get("base_sha"),
+            "candidate_sha": git_revision(),
+            "lane": case.get("lane"),
+            "evidence_tier": EVIDENCE_TIER_TRACE_REPLAY,
+            "provider": case.get("provider"),
+            "task_finished": False,
+            "artifact_observed": False,
+            "acceptance_verified": False,
+            "human_accepted": None,
+            "oracle": case.get("run_status"),
+            "task_passed": False,
+            "evaluator_assertions_passed": False,
+            "llm_calls": case.get("llm_calls"),
+            "estimated_cost_usd": (case.get("cost") or {}).get("estimated_usd"),
+            "actual_spend_usd": (case.get("cost") or {}).get("actual_usd"),
+            "cost_coverage": _cost_coverage(case.get("cost")),
+            "limitations": limitations,
+        }
+
+    task_finished = bool(case.get("terminal"))
+    artifact_observed = _artifact_observed(
+        case.get("required_artifacts") or [],
+        case.get("produced_artifacts") or [],
+    )
+    acceptance_verified = _acceptance_verified(case, artifact_observed)
+
+    event = case.get("human_acceptance")
+    human_accepted = None if not isinstance(event, dict) else event.get("approved")
+
+    task_passed = bool(task_finished and artifact_observed and acceptance_verified)
+    expected = (case.get("expect") or {}).get("task_passed")
+    evaluator_assertions_passed = expected is not None and task_passed == expected
+
+    cost = case.get("cost") or {}
+    return {
+        "case_id": case["case_id"],
+        "base_sha": case.get("base_sha"),
+        "candidate_sha": git_revision(),
+        "lane": case["lane"],
+        "evidence_tier": EVIDENCE_TIER_TRACE_REPLAY,
+        "provider": case["provider"],
+        "task_finished": task_finished,
+        "artifact_observed": artifact_observed,
+        "acceptance_verified": acceptance_verified,
+        "human_accepted": human_accepted,
+        "oracle": case.get("run_status"),
+        "task_passed": task_passed,
+        "evaluator_assertions_passed": evaluator_assertions_passed,
+        "llm_calls": case.get("llm_calls"),
+        "estimated_cost_usd": cost.get("estimated_usd"),
+        "actual_spend_usd": cost.get("actual_usd"),
+        "cost_coverage": _cost_coverage(cost),
+        "limitations": limitations,
+    }
+
+
+def evaluate_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [evaluate_case(c) for c in cases]
+
+
+def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate metrics — the benchmark's own honesty check
+    (evaluator_assertions) plus the graded outcomes, keeping both visible:
+    a green assertion summary says the evaluator judged correctly, which is
+    NOT the same as saying the traced runs passed."""
+    return {
+        "cases": len(results),
+        "task_passed": sum(1 for r in results if r["task_passed"]),
+        "task_finished": sum(1 for r in results if r["task_finished"]),
+        "evaluator_assertions_passed": all(r["evaluator_assertions_passed"] for r in results),
+        "candidate_sha": git_revision(),
+        "evidence_tier": EVIDENCE_TIER_TRACE_REPLAY,
+    }
