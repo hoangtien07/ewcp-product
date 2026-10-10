@@ -124,14 +124,45 @@ def _request(*, context: dict[str, Any] | None = None, content: str = "x" * 400)
     )
 
 
+class _FakeStore:
+    """Minimal ExecutionRunMap stand-in — `list_for_thread` is the only
+    read the middleware's identity resolution needs."""
+
+    def __init__(self, records: list[Any] | None = None) -> None:
+        self._records = records or []
+
+    async def list_for_thread(self, thread_id: str, **kwargs: Any) -> list[Any]:
+        return [r for r in self._records if r.thread_id == thread_id]
+
+
+def _governed_store(*, workrun_id: str = "wr-77", thread_id: str = "t-1", run_id: str = "run-9") -> _FakeStore:
+    """The binding the governed launch path writes: this thread+run admit
+    under the kernel workrun, never a context stamp."""
+    record = SimpleNamespace(thread_id=thread_id, run_id=run_id, workrun_id=workrun_id, task_mode="governed")
+    return _FakeStore([record])
+
+
 def _middleware(
     budget: Any,
     config: ModelPolicyConfig | None = None,
     policy: HostPolicySnapshot | None = None,
+    *,
+    store: Any = None,
+    tenant_id_getter: Any = None,
 ) -> BudgetAdmissionMiddleware:
-    return BudgetAdmissionMiddleware(budget, config or _config(), policy or HostPolicySnapshot())
+    store_getter = (lambda: store) if store is not None else None
+    return BudgetAdmissionMiddleware(
+        budget,
+        config or _config(),
+        policy or HostPolicySnapshot(),
+        tenant_id_getter=tenant_id_getter,
+        store_getter=store_getter,
+    )
 
 
+# The `kernel` key below is deliberately forge-shaped: budget must ignore it
+# (identity comes from the bound store), so governed tests model it staying
+# in context while the map row does the talking.
 GOVERNED_CTX = {"kernel": {"workrun_id": "wr-77"}, "run_id": "run-9", "thread_id": "t-1"}
 GENERAL_CTX = {"run_id": "run-9", "thread_id": "t-1"}
 
@@ -152,7 +183,7 @@ async def test_governed_deny_before_call_spy_never_invoked() -> None:
     spy = _SpyHandler()
 
     with pytest.raises(AdmissionError):
-        await _middleware(budget).awrap_model_call(_request(context=GOVERNED_CTX), spy)
+        await _middleware(budget, store=_governed_store()).awrap_model_call(_request(context=GOVERNED_CTX), spy)
 
     assert spy.calls == 0
 
@@ -165,7 +196,7 @@ async def test_governed_policy_unavailable_failclosed() -> None:
     spy = _SpyHandler()
 
     with pytest.raises(AdmissionError):
-        await _middleware(budget).awrap_model_call(_request(context=GOVERNED_CTX), spy)
+        await _middleware(budget, store=_governed_store()).awrap_model_call(_request(context=GOVERNED_CTX), spy)
 
     assert spy.calls == 0
 
@@ -177,7 +208,7 @@ async def test_governed_admit_settle_attributes_to_workrun() -> None:
     budget = _FakeBudgetClient()
     spy = _SpyHandler(result=_used_response(input_tokens=200, output_tokens=50))
 
-    result = await _middleware(budget).awrap_model_call(_request(context=GOVERNED_CTX), spy)
+    result = await _middleware(budget, store=_governed_store()).awrap_model_call(_request(context=GOVERNED_CTX), spy)
 
     assert spy.calls == 1
     assert result is spy._result
@@ -202,7 +233,7 @@ async def test_governed_handler_failure_releases_reservation() -> None:
     spy = _SpyHandler(error=RuntimeError("provider exploded"))
 
     with pytest.raises(RuntimeError, match="provider exploded"):
-        await _middleware(budget).awrap_model_call(_request(context=GOVERNED_CTX), spy)
+        await _middleware(budget, store=_governed_store()).awrap_model_call(_request(context=GOVERNED_CTX), spy)
 
     assert budget.releases == ["adm-1"]
     assert budget.settles == []
@@ -216,7 +247,7 @@ async def test_governed_settle_failure_is_failclosed() -> None:
     spy = _SpyHandler(result=_used_response())
 
     with pytest.raises(AdmissionError):
-        await _middleware(budget).awrap_model_call(_request(context=GOVERNED_CTX), spy)
+        await _middleware(budget, store=_governed_store()).awrap_model_call(_request(context=GOVERNED_CTX), spy)
 
 
 @pytest.mark.asyncio
@@ -226,7 +257,7 @@ async def test_missing_usage_settles_the_reserved_amount() -> None:
     budget = _FakeBudgetClient()
     spy = _SpyHandler(result=ModelResponse(result=[AIMessage(content="no usage here")]))
 
-    await _middleware(budget).awrap_model_call(_request(context=GOVERNED_CTX), spy)
+    await _middleware(budget, store=_governed_store()).awrap_model_call(_request(context=GOVERNED_CTX), spy)
 
     assert len(budget.settles) == 1
     settle = budget.settles[0]
@@ -324,7 +355,7 @@ async def test_no_cap_configured_skips_admission() -> None:
     budget = _FakeBudgetClient()
     spy = _SpyHandler(result=_used_response())
 
-    await _middleware(budget, _config(cap_usd=None)).awrap_model_call(_request(context=GOVERNED_CTX), spy)
+    await _middleware(budget, _config(cap_usd=None), store=_governed_store()).awrap_model_call(_request(context=GOVERNED_CTX), spy)
 
     assert spy.calls == 1
     assert budget.admits == []
@@ -433,17 +464,57 @@ async def test_budget_tenant_id_wins_over_invoke() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ewcp_tenant_id_context_stamp_wins() -> None:
-    """A run-scoped `ewcp_tenant_id` stamp (the same runtime-context key
-    the egress policy resolves) overrides the configured tenant."""
+async def test_ewcp_tenant_id_context_stamp_is_ignored() -> None:
+    """The `ewcp_tenant_id` runtime-context key is client-controllable until
+    the egress stamp pass runs — the admit must never read it. The declared
+    tenant comes from the deployment getter (or configured fallback)."""
     budget = _FakeBudgetClient()
     spy = _SpyHandler(result=_used_response())
     context = dict(GOVERNED_CTX)
-    context["ewcp_tenant_id"] = "tenant-ctx"
+    context["ewcp_tenant_id"] = "tenant-ctx"  # forged-shaped value
 
-    await _middleware(budget, _config(tenant_id="acme")).awrap_model_call(_request(context=context), spy)
+    await _middleware(budget, _config(tenant_id="acme"), store=_governed_store()).awrap_model_call(_request(context=context), spy)
 
-    assert budget.admits[0]["tenant_id"] == "tenant-ctx"
+    assert budget.admits[0]["tenant_id"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_tenant_getter_wins_over_config() -> None:
+    """The deployment tenant getter is the same authenticated source the
+    egress stamp pass writes — it beats the configured budget tenant,
+    matching the old 'stamp wins' precedence without trusting the context."""
+    budget = _FakeBudgetClient()
+    spy = _SpyHandler(result=_used_response())
+
+    await _middleware(budget, _config(tenant_id="acme"), tenant_id_getter=lambda: "deploy-tenant").awrap_model_call(_request(context=GENERAL_CTX), spy)
+
+    assert budget.admits[0]["tenant_id"] == "deploy-tenant"
+
+
+@pytest.mark.asyncio
+async def test_context_workrun_stamp_alone_is_not_governed_proof() -> None:
+    """A `kernel.workrun_id` context value without an ExecutionRunMap row
+    mints no governed identity — the admit lands on the run id."""
+    budget = _FakeBudgetClient()
+    spy = _SpyHandler(result=_used_response())
+    context = {"kernel": {"workrun_id": "wr-claimed"}, "run_id": "run-9", "thread_id": "t-1"}
+
+    await _middleware(budget).awrap_model_call(_request(context=context), spy)
+
+    assert budget.admits[0]["execution_run_id"] == "run-9"
+
+
+@pytest.mark.asyncio
+async def test_governed_identity_needs_no_context_stamp() -> None:
+    """The ExecutionRunMap binding alone proves governed identity — the
+    admit is correct even when no stamp pass ever ran on the context."""
+    budget = _FakeBudgetClient()
+    spy = _SpyHandler(result=_used_response())
+    context = {"run_id": "run-9", "thread_id": "t-1"}  # no kernel key at all
+
+    await _middleware(budget, store=_governed_store()).awrap_model_call(_request(context=context), spy)
+
+    assert budget.admits[0]["execution_run_id"] == "wr-77"
 
 
 # -- sync path -----------------------------------------------------------------
@@ -451,11 +522,30 @@ async def test_ewcp_tenant_id_context_stamp_wins() -> None:
 
 def test_sync_governed_call_fails_closed() -> None:
     """The sync model-call path cannot reach the kernel — a governed run
-    there denies rather than spending unaccounted."""
+    there denies rather than spending unaccounted. The ExecutionRunMap
+    binding (resolved on a private loop) proves governed-ness; the forge-
+    shaped context stamp is ignored."""
     spy = _SyncSpyHandler()
 
     with pytest.raises(AdmissionError):
-        _middleware(_FakeBudgetClient()).wrap_model_call(_request(context=GOVERNED_CTX), spy)
+        _middleware(_FakeBudgetClient(), store=_governed_store()).wrap_model_call(_request(context=GOVERNED_CTX), spy)
+
+    assert spy.calls == 0
+
+
+def test_sync_unverifiable_identity_fails_closed_under_cap() -> None:
+    """Sync path with a bound store whose read fails: governed-ness is
+    unverifiable, so a capped deployment denies rather than risk an
+    unaccounted governed call."""
+
+    class _DownStore:
+        async def list_for_thread(self, thread_id: str, **kwargs: Any) -> list[Any]:
+            raise ConnectionError("db gone")
+
+    spy = _SyncSpyHandler()
+
+    with pytest.raises(AdmissionError):
+        _middleware(_FakeBudgetClient(), store=_DownStore()).wrap_model_call(_request(context=GENERAL_CTX), spy)
 
     assert spy.calls == 0
 

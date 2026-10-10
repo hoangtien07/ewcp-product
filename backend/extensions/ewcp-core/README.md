@@ -200,8 +200,14 @@ verbatim, so trusting them would let any run claim a non_sensitive
 tenant, a looser mode, or a forged governed identity. The legitimate
 `kernel.workrun_id` is then re-stamped from server-owned state — the
 ExecutionRunMap binding the governed launch path (api_routes →
-RunLauncher admission) wrote for this thread/run — so governed budget
-attribution survives while forged identities die with the strip.
+RunLauncher admission) wrote for this thread/run — feeding the egress
+checks and the invoke lane's run binding. Budget admission does NOT
+read the stamp: `BudgetAdmissionMiddleware` resolves tenant via
+`tenant_id_getter` and workrun via `store_getter` →
+`ExecutionRunStore.list_for_thread` directly, because it runs OUTER of
+this stamp pass at `MODEL_PHYSICAL` — a forge reaches it un-defended.
+When the map is unreadable the identity is unverifiable: a configured
+`cap_usd` fails closed (`AdmissionError`), no cap degrades to general.
 Invocation rows (`task_mode=invoke`) never stamp, matching
 `invoke_tools._execution_run_id`'s exclusion. Unknown tenants
 are `sensitive` under `default_mode` (fail-closed). `non_sensitive`
