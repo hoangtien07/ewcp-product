@@ -77,8 +77,17 @@ function stubAll(
         body = { run };
       } else if (u === "/api/ewcp/runs/er-1/resume") {
         body = run;
+      } else if (u === "/api/ewcp/runs/er-1?refresh=1") {
+        body = { run };
       } else if (u === "/api/ewcp/runs/er-1/workrun") {
         body = { workrun };
+      } else if (u === "/api/threads/t-1/runs/r-1/join") {
+        return Promise.resolve(
+          new Response("event: end\ndata: null\n\n", {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        );
       } else if (u === "/api/ewcp/runs/er-1/decisions") {
         // the kernel decision POST returns the workrun run-view itself
         body = workrun;
@@ -164,6 +173,25 @@ describe("ExecutionRunThread", () => {
         decision_id: "d-1",
       });
     });
+  });
+
+  test("stream end on a live governed run re-fetches the workrun, not only the record", async () => {
+    const calls = stubAll(
+      true,
+      { ...RUN, status: "running" },
+      { ...WORKRUN, status: "candidate_complete" },
+    );
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() => {
+      const workrunReads = calls.filter(
+        (c) => c.url === "/api/ewcp/runs/er-1/workrun",
+      );
+      expect(workrunReads.length).toBeGreaterThanOrEqual(2);
+    });
+    // and the refreshed governed truth renders, not the mount-time state
+    await waitFor(() =>
+      expect(screen.getByText("Duyệt kết quả?")).toBeTruthy(),
+    );
   });
 
   test("pending_interrupt shows the resume box and posts the payload", async () => {

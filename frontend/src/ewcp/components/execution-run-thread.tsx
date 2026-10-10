@@ -131,7 +131,20 @@ export function ExecutionRunThread({
       .finally(() => {
         setStreaming(false);
         getExecutionRun(executionRunId, { refresh: true })
-          .then(setRun)
+          .then((r) => {
+            setRun(r);
+            // the governed view is kernel-side truth and can transition
+            // while the product stream is still open (kernel-first
+            // dispatch) — re-read it here or a mount-time "running"
+            // would stay stale until remount.
+            if (r.workrun_id) {
+              getWorkrun(r.execution_run_id)
+                .then(setWorkrun)
+                .catch(() => {
+                  // best-effort like the record refresh
+                });
+            }
+          })
           .catch(() => {
             // refresh best-effort; next state change retries
           });
