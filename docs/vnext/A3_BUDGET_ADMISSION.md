@@ -59,9 +59,20 @@ success              : settle(tokens=usage.total, usd=usage.total*price/1k)
 (`_classify_error` → `"admission"`), so a deny surfaces as the run's fallback
 message — not a retry loop, not a crash.
 
-**Identity**: `runtime.context["kernel"]["workrun_id"]` (stamped by the Task-2
-launcher) → governed, `execution_run_id = workrun_id`. Otherwise general,
-`execution_run_id = context["run_id"]`.
+**Identity**: resolved from server state, never from context stamps — the
+ExecutionRunMap binding (`ExecutionRunStore.list_for_thread(thread_id)`,
+non-`invoke` rows with a `workrun_id`, `run_id` match first) yields the governed
+`execution_run_id = workrun_id`; otherwise general, `execution_run_id =
+context["run_id"]` (`run_id`/`thread_id` are set by the run worker and cannot
+be forged). The tenant comes from `tenant_id_getter()` (the deployment's
+authenticated tenant) falling back to `budget.tenant_id`. Context stamps
+(`kernel`, `ewcp_tenant_id`) are client-controllable until re-stamped, and the
+budget middleware sits *outer* of the egress stamp pass at `MODEL_PHYSICAL`, so
+the admit must not read them — a forge on the wire is dead input. When the map
+cannot be read at all the identity is unverifiable: a configured cap fails
+closed (`AdmissionError`), no cap degrades to general + warning. Sync
+`wrap_model_call` resolves on a private loop (executor threads have no running
+loop); when no safe read exists, unverifiable fails closed the same way.
 
 **`intercepting=True`** (`MiddlewarePlacement`): contributions default to the
 host's fail-open `IsolatedMiddleware`, which swallows exceptions into
