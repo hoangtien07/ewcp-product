@@ -9,3 +9,4 @@ Window: ~7h from 2026-10-10 ~19:00 UTC (≈08:30 ICT 2026-10-11). Lead: parent s
 
 ## Running
 - NEXT: N01 (spawn worker; N01+N02 coupled -> same Product branch if needed).
+- 19:20 UTC: spawned W1 (N01+N02, session 99f4a715) + W2 (N06+N07 audits, session d1467c86). Subscribed to settle notifications.
