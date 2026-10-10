@@ -25,7 +25,7 @@ from typing import Annotated, Any
 
 import httpx
 from deerflow.config.paths import get_paths
-from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.runtime.user_context import get_current_user, get_effective_user_id
 from deerflow.tools.types import Runtime
 from deerflow_extension_api.placement import AgentScope, MiddlewarePlacement, Placement
 from langchain.agents.middleware import AgentMiddleware
@@ -165,6 +165,7 @@ async def _bind_invocation_record(
     outcome_type: str,
     idempotency_key: str,
     run: Mapping[str, Any],
+    created_by: str | None = None,
 ) -> str | None:
     """Project a successful invoke into the ExecutionRunMap (A6 #13):
     the hybrid lane's deep link `/workspace/ewcp-runs/{id}` resolves only
@@ -177,7 +178,10 @@ async def _bind_invocation_record(
     thread_id = ctx.get("thread_id")
     if store is None or not thread_id or not workrun_id:
         return None
-    created_by = str(ctx.get("user_id") or get_effective_user_id())
+    # `created_by` is the map row's owner identity — external writes pin
+    # the verified session id (same principal as X-Ewcp-Actor); other
+    # lanes keep the runtime-context resolution.
+    created_by = created_by or str(ctx.get("user_id") or get_effective_user_id())
     try:
         existing = await store.get_by_idempotency_key(created_by, idempotency_key)
         if existing is not None:
@@ -317,6 +321,28 @@ async def invoke_impl(
     except httpx.HTTPError as exc:
         return _fail("kernel_unreachable", f"kernel request failed: {exc.__class__.__name__}", "retry")
 
+    # C10 (council P1): for `external_write` capabilities the kernel binds
+    # ProposedAction.requester / the audit principal to X-Ewcp-Actor, so
+    # the actor MUST be the verified product session identity — the
+    # request-scoped ContextVar the gateway auth middleware sets — never
+    # runtime.context/config (`ctx.user_id` is caller-supplied on
+    # embedded/internal-caller runs) and never the anonymous `user:default`
+    # fallback. Without a session the write is denied BEFORE dispatch: an
+    # invoke without the header would bind `tenant:<t>`/`dev:anonymous`
+    # kernel-side, which is not a product user.
+    actor: str | None = None
+    session_user_id: str | None = None
+    if descriptor.get("side_effect_class") == "external_write":
+        session_user = get_current_user()
+        if session_user is None:
+            return _fail(
+                "unauthenticated",
+                f"capability {outcome_type!r} is an external_write — an authenticated product session is required to mint X-Ewcp-Actor (anonymous `user:default` is not a write principal)",
+                "fatal",
+            )
+        session_user_id = str(session_user.id)
+        actor = f"user:{session_user_id}"
+
     schema = descriptor.get("input_schema") if isinstance(descriptor.get("input_schema"), Mapping) else {}
     context = dict(context or {})
     required = schema.get("required_context") or []
@@ -347,6 +373,13 @@ async def invoke_impl(
     key = str(idempotency_key) if idempotency_key else f"invoke-{uuid.uuid4().hex}"
     invocation_id = f"inv-{uuid.uuid4().hex}"
     execution_run_id = await _execution_run_id(deps, ctx)
+    # C10: non-write invocations assert the session-bound user on
+    # X-Ewcp-Actor — runtime-context user (server-restamped from the
+    # session on gateway runs, or an internal channel's verified end-user
+    # id) then the ContextVar, degrading to the anon `user:default` scope.
+    # The model can neither pick nor override it (no actor tool arg).
+    if actor is None:
+        actor = f"user:{ctx.get('user_id') or get_effective_user_id()}"
 
     try:
         result: InvokeResult = await client.invoke_outcome(
@@ -357,6 +390,7 @@ async def invoke_impl(
             invocation_id=invocation_id,
             execution_run_id=execution_run_id,
             idempotency_key=key,
+            actor=actor,
         )
     except KernelInvokeError as exc:
         return _invoke_error_payload(exc)
@@ -372,6 +406,7 @@ async def invoke_impl(
         outcome_type=outcome_type,
         idempotency_key=key,
         run=run,
+        created_by=session_user_id,
     )
     return _result(
         {

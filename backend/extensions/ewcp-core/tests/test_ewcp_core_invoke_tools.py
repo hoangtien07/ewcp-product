@@ -28,6 +28,7 @@ from typing import Any
 
 import httpx
 import pytest
+from deerflow.runtime.user_context import reset_current_user, set_current_user
 
 from ewcp_core import invoke_tools
 from ewcp_core.egress_policy import EgressPolicy
@@ -66,6 +67,16 @@ _RUN_VIEW: dict[str, Any] = {
     "contract_version": "1",
     "invocation_id": "inv-abc",
     "execution_run_id": "er_x",
+}
+
+_EXTERNAL_WRITE_DESCRIPTOR: dict[str, Any] = {
+    **_DESCRIPTOR,
+    "capability_id": "pack:create_draft_po",
+    "side_effect_class": "external_write",
+    "input_schema": {
+        **_DESCRIPTOR["input_schema"],
+        "required_context": [],
+    },
 }
 
 
@@ -215,6 +226,25 @@ async def test_invoke_replay_flag_from_header() -> None:
     result = await client.invoke_outcome("invoice_recon", idempotency_key="key-2")
 
     assert result.idempotent_replay is True
+
+
+@pytest.mark.asyncio
+async def test_invoke_outcome_sends_actor_header() -> None:
+    """C10: `actor` rides as X-Ewcp-Actor alongside the Idempotency-Key —
+    the kernel binds it into ProposedAction.requester for governed
+    writes."""
+    rec = _Recorder([_json_response(_RUN_VIEW)])
+    client = _client(rec)
+
+    await client.invoke_outcome(
+        "invoice_recon",
+        actor="user:u-7",
+        idempotency_key="key-actor",
+    )
+
+    req = rec.requests[0]
+    assert req.headers["x-ewcp-actor"] == "user:u-7"
+    assert req.headers["idempotency-key"] == "key-actor"
 
 
 @pytest.mark.asyncio
@@ -437,6 +467,172 @@ async def test_invoke_caller_supplied_idempotency_key_passes_through() -> None:
     await invoke_tools.invoke_impl(deps, CTX, outcome_type="invoice_recon", context={"period": "p"}, idempotency_key="agent-key-1")
 
     assert rec.requests[1].headers["idempotency-key"] == "agent-key-1"
+
+
+@pytest.mark.asyncio
+async def test_invoke_binds_actor_from_runtime_user() -> None:
+    """C10: the agent's invoke asserts the session-bound user on
+    X-Ewcp-Actor so ProposedAction.requester binds a product identity —
+    the model cannot pick or override it (actor is not a tool arg)."""
+    rec = _descriptor_then_run()
+    deps = _deps(_client(rec))
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            CTX,
+            outcome_type="invoice_recon",
+            context={"period": "p"},
+        )
+    )
+
+    assert out["ok"] is True
+    assert rec.requests[1].headers["x-ewcp-actor"] == "user:u-1"
+
+
+@pytest.mark.asyncio
+async def test_invoke_actor_anon_scoped_without_user_context() -> None:
+    """C10: with no session identity the header degrades to the
+    contextvar's anon scope (`user:default`) — never attacker-chosen."""
+    rec = _descriptor_then_run()
+    deps = _deps(_client(rec))
+    ctx = {"thread_id": "t-1", "run_id": "r-1"}  # no user_id
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            ctx,
+            outcome_type="invoice_recon",
+            context={"period": "p"},
+        )
+    )
+
+    assert out["ok"] is True
+    assert rec.requests[1].headers["x-ewcp-actor"] == "user:default"
+
+
+@pytest.mark.asyncio
+async def test_invoke_actor_ignores_model_supplied_context_keys() -> None:
+    """C10 anti-impersonation: capability `context` values are form
+    fields — a model-crafted key masquerading as the actor cannot reach
+    the header."""
+    rec = _descriptor_then_run()
+    deps = _deps(_client(rec))
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            CTX,
+            outcome_type="invoice_recon",
+            context={"period": "p", "x_ewcp_actor": "user:admin", "actor": "user:admin"},
+        )
+    )
+
+    assert out["ok"] is True
+    assert rec.requests[1].headers["x-ewcp-actor"] == "user:u-1"
+
+
+# ---------------------------------------------------------------------------
+# external_write actor binding (C10 council P1)
+# ---------------------------------------------------------------------------
+
+
+def _external_write_then_run(run_payload: dict | None = None):
+    return _Recorder(
+        [
+            _json_response(_EXTERNAL_WRITE_DESCRIPTOR),
+            _json_response(run_payload if run_payload is not None else _RUN_VIEW),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_external_write_actor_minted_from_verified_session_not_context() -> None:
+    """C10 rework: a forged `user_id` in runtime context/config can NEVER
+    reach X-Ewcp-Actor on an external_write — the header is minted from the
+    authenticated session identity (the request ContextVar) only."""
+    rec = _external_write_then_run()
+    deps = _deps(_client(rec))
+    forged_ctx = {"thread_id": "t-1", "run_id": "r-1", "user_id": "forged-admin"}
+    token = set_current_user(SimpleNamespace(id="u-real"))
+    try:
+        out = json.loads(
+            await invoke_tools.invoke_impl(
+                deps,
+                forged_ctx,
+                outcome_type="create_draft_po",
+                context={"vendor": "V-1"},
+            )
+        )
+    finally:
+        reset_current_user(token)
+
+    assert out["ok"] is True
+    assert rec.requests[1].headers["x-ewcp-actor"] == "user:u-real"
+
+
+@pytest.mark.asyncio
+async def test_external_write_denied_without_session_no_default_actor() -> None:
+    """C10 rework: no anonymous/`user:default` fallback on external writes —
+    an unauthenticated invoke is rejected at the product BEFORE dispatch, so
+    the kernel never sees a write request it would bind to
+    `tenant:<t>`/`dev:anonymous`."""
+    rec = _Recorder([_json_response(_EXTERNAL_WRITE_DESCRIPTOR)])
+    deps = _deps(_client(rec))
+    ctx = {"thread_id": "t-1", "run_id": "r-1", "user_id": "u-1"}  # forged ctx can't rescue it
+
+    out = json.loads(
+        await invoke_tools.invoke_impl(
+            deps,
+            ctx,
+            outcome_type="create_draft_po",
+            context={"vendor": "V-1"},
+        )
+    )
+
+    assert out["ok"] is False
+    assert out["error"] == "unauthenticated"
+    assert out["guidance"] == "fatal"
+    # descriptor GET only — the /run POST was never dispatched, so no
+    # X-Ewcp-Actor (and no `user:default`) was ever emitted.
+    assert len(rec.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_external_write_actor_not_overridable_via_tool_context_arg() -> None:
+    """C10 rework: tool-arg `context` values are capability form fields — a
+    model-crafted `user_id`/`actor` key cannot steer the session-minted
+    external-write actor either."""
+    rec = _external_write_then_run()
+    deps = _deps(_client(rec))
+    token = set_current_user(SimpleNamespace(id="u-real"))
+    try:
+        out = json.loads(
+            await invoke_tools.invoke_impl(
+                deps,
+                CTX,
+                outcome_type="create_draft_po",
+                context={"user_id": "admin", "actor": "user:admin", "x_ewcp_actor": "user:admin"},
+            )
+        )
+    finally:
+        reset_current_user(token)
+
+    assert out["ok"] is True
+    assert rec.requests[1].headers["x-ewcp-actor"] == "user:u-real"
+
+
+@pytest.mark.asyncio
+async def test_non_write_invoke_keeps_context_actor_minting() -> None:
+    """Non-external-write lanes keep the prior minting (runtime-context user
+    first, ContextVar fallback) — the session-only rule is write-scoped."""
+    rec = _descriptor_then_run()
+    deps = _deps(_client(rec))
+
+    out = json.loads(await invoke_tools.invoke_impl(deps, CTX, outcome_type="invoice_recon", context={"period": "p"}))
+
+    assert out["ok"] is True
+    assert rec.requests[1].headers["x-ewcp-actor"] == "user:u-1"
 
 
 @pytest.mark.asyncio

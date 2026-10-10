@@ -102,7 +102,7 @@ class FakeClient:
     async def list_outcomes(self):
         return [{"outcome_type": "invoice_recon"}]
 
-    async def create_task(self, *, intent, tenant_id=None, fields=None, files=None, idempotency_key=None, timeout=None):
+    async def create_task(self, *, intent, tenant_id=None, fields=None, files=None, idempotency_key=None, timeout=None, actor=None):
         self.calls.append(
             (
                 "create_task",
@@ -111,6 +111,7 @@ class FakeClient:
                 dict(fields or {}),
                 {k: [m[0] for m in v] for k, v in (files or {}).items()},
                 idempotency_key,
+                actor,
             )
         )
         run = dict(self.create_task_response)
@@ -119,7 +120,7 @@ class FakeClient:
             idempotent_replay=self.create_task_replay,
         )
 
-    async def run_outcome(self, outcome_type, *, tenant_id=None, fields=None, files=None, timeout=None):
+    async def run_outcome(self, outcome_type, *, tenant_id=None, fields=None, files=None, timeout=None, actor=None):
         self.calls.append(
             (
                 "run_outcome",
@@ -127,6 +128,7 @@ class FakeClient:
                 tenant_id,
                 dict(fields or {}),
                 {k: [m[0] for m in v] for k, v in (files or {}).items()},
+                actor,
             )
         )
         return dict(self.run_outcome_response)
@@ -396,6 +398,21 @@ def test_decide_refused_without_binding():
     assert c.post(f"/api/ewcp/runs/{er_id}/decisions", json={"answer": "approve"}).status_code == 409
 
 
+def test_decide_replaces_client_supplied_actor_header(service):
+    """C10 anti-impersonation: a caller-asserted X-Ewcp-Actor never
+    reaches the kernel — the route mints the actor from the session
+    principal, replacing the forged value."""
+    c = TestClient(_app(service))
+    er_id = next(iter(service._store.records))
+    r = c.post(
+        f"/api/ewcp/runs/{er_id}/decisions",
+        json={"answer": "approve", "decision_id": "d-1"},
+        headers={"X-Ewcp-Actor": "user:admin"},
+    )
+    assert r.status_code == 200
+    assert service.client.calls[-1] == ("decide", "wr-1", "approve", "d-1", "user:u-1", "user:u-1")
+
+
 def test_outcomes_proxy(service):
     c = TestClient(_app(service))
     assert c.get("/api/ewcp/outcomes").json()["outcomes"] == [{"outcome_type": "invoice_recon"}]
@@ -552,6 +569,46 @@ def test_governed_launch_with_outcome_type_dispatches_run_outcome():
     assert call[2] == "demo"
     assert call[4] == {"invoices_zip": ["inv.zip"]}
     assert launcher.launch_calls[0]["workrun_id"] == "wr-new"
+
+
+def test_governed_launch_binds_session_actor_replacing_client_header():
+    """C10: governed intake binds ProposedAction.requester — the actor
+    minted from the authenticated session travels on every intake
+    variant, and a forged inbound X-Ewcp-Actor is dropped, never
+    forwarded."""
+    client = FakeClient()
+    launcher = FakeLauncher()
+    service = FakeService(client=client, launcher=launcher)
+    c = TestClient(_app(service, agent_runs=_Runs()))
+
+    r = c.post(
+        "/api/ewcp/runs",
+        data={
+            "intent": "đối soát Q4",
+            "task_mode": "governed",
+            "idempotency_key": "k-1",
+        },
+        headers={"X-Ewcp-Actor": "user:admin"},
+    )
+    assert r.status_code == 200
+    call = client.calls[0]
+    assert call[0] == "create_task"
+    # session-bound actor, not the forged header value
+    assert call[6] == "user:u-1"
+
+    r2 = c.post(
+        "/api/ewcp/runs",
+        data={
+            "intent": "đối soát",
+            "task_mode": "governed",
+            "outcome_type": "invoice_recon",
+        },
+        headers={"X-Ewcp-Actor": "user:admin"},
+    )
+    assert r2.status_code == 200
+    call2 = client.calls[1]
+    assert call2[0] == "run_outcome"
+    assert call2[5] == "user:u-1"
 
 
 def test_governed_launch_form_tenant_beats_config():

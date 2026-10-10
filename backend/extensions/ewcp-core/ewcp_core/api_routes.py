@@ -258,6 +258,11 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
             context_fields = {name: value for name, value in form.multi_items() if isinstance(value, str) and name not in _LAUNCH_FORM_FIELDS}
             kernel_files = {slot: [(f.filename, f.body, f.content_type) for f in payloads] for slot, payloads in uploads_by_field.items()}
             timeout = float(service.config.get("intake_timeout_seconds") or 180.0)
+            # C10: the kernel binds ProposedAction.requester / audit
+            # principals from X-Ewcp-Actor — minted HERE from the session,
+            # never from the inbound request (a forged client header is
+            # dropped by this boundary).
+            actor = _actor(uid)
             try:
                 outcome_type = _field("outcome_type")
                 if outcome_type:
@@ -267,6 +272,7 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
                         fields=context_fields,
                         files=kernel_files,
                         timeout=timeout,
+                        actor=actor,
                     )
                 else:
                     submitted = await client.create_task(
@@ -276,6 +282,7 @@ def build_api_router(service: EwcpCoreService) -> APIRouter:
                         files=kernel_files,
                         idempotency_key=key,
                         timeout=timeout,
+                        actor=actor,
                     )
                     run_view = submitted.run
             except Exception as exc:

@@ -380,6 +380,59 @@ async def test_create_task_with_key_retries_and_replay_is_safe() -> None:
     assert rec.requests[1].headers["idempotency-key"] == "key-2"
 
 
+# -- X-Ewcp-Actor binding (C10) -----------------------------------------------
+#
+# The actor is a trusted M2M assertion the kernel binds into the audit
+# principal (<actor>@tenant:<tenant>) — for governed writes it becomes
+# ProposedAction.requester, for decisions/accepts the recorded decider.
+# The value is minted by the EXTENSION from the authenticated session, so
+# every mutation that reaches an actor-aware kernel endpoint accepts an
+# explicit `actor` param. Callers never see the header construction, and
+# nothing inbound (request headers, form fields, tool args) can set it.
+
+
+@pytest.mark.asyncio
+async def test_create_task_sends_actor_header() -> None:
+    rec = _Recorder([_json_response({"workrun_id": "wr-30"})])
+    client = _client(rec)
+    await client.create_task(intent="đối soát", idempotency_key="k", actor="user:u-7")
+    await client.aclose()
+
+    assert rec.requests[0].headers["x-ewcp-actor"] == "user:u-7"
+
+
+@pytest.mark.asyncio
+async def test_run_outcome_sends_actor_header() -> None:
+    rec = _Recorder([_json_response({"workrun_id": "wr-31"})])
+    client = _client(rec)
+    await client.run_outcome("invoice_recon", actor="user:u-7")
+    await client.aclose()
+
+    assert rec.requests[0].headers["x-ewcp-actor"] == "user:u-7"
+
+
+@pytest.mark.asyncio
+async def test_actor_header_absent_when_unset() -> None:
+    """Without a bound user the header must not be minted at all — an
+    anon/unauthenticated call degrades to the tenant principal kernel-side,
+    never to a guessed identity."""
+    rec = _Recorder(
+        [
+            _json_response({"workrun_id": "wr-32"}),
+            _json_response({"workrun_id": "wr-33"}),
+            _json_response({"workrun_id": "wr-34"}),
+        ]
+    )
+    client = _client(rec)
+    await client.create_task(intent="x")
+    await client.run_outcome("invoice_recon")
+    await client.invoke_outcome("invoice_recon", idempotency_key="k-9")
+    await client.aclose()
+
+    for req in rec.requests:
+        assert "x-ewcp-actor" not in req.headers
+
+
 # -- POST /workruns/{id}/decisions: mutation, no kernel replay contract ------
 
 

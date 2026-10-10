@@ -24,6 +24,18 @@ HTTP (Option A+) — never mounted in-process. Verified wire contract
                                       (app.py:1599)
   auth   `X-Ewcp-Api-Key` header — the extension-contract key name
                                       (app.py:614-618)
+  actor  `X-Ewcp-Actor` header — trusted M2M assertion of the acting
+                                      product user (`user:<id>`), bound by
+                                      the kernel into the audit principal
+                                      `<actor>@tenant:<tenant>` (decisions,
+                                      accepts) and `ProposedAction.requester`
+                                      (governed writes). Minted by the
+                                      extension from the AUTHENTICATED
+                                      session — never forwarded from the
+                                      inbound request (C10): this client
+                                      only sets headers it builds itself,
+                                      so a caller-supplied `X-Ewcp-Actor`
+                                      can never reach the kernel.
 
 Retry policy (spec A3 Task 1): safe reads retry bounded on transient
 faults (408/429/5xx, transport errors; kernel's own GeminiClient pattern —
@@ -76,6 +88,11 @@ def _DEFAULT_BACKOFF(attempt: int) -> float:
 
 ENV_KERNEL_URL = "EWCP_KERNEL_URL"
 ENV_KERNEL_API_KEY = "EWCP_KERNEL_API_KEY"
+
+#: Header name of the trusted M2M actor assertion (kernel `_actor`,
+#: app.py:825-863). Set ONLY through each method's explicit `actor`
+#: kwarg — never through a caller-controlled headers mapping.
+ACTOR_HEADER = "X-Ewcp-Actor"
 
 
 class KernelNotConfigured(RuntimeError):
@@ -487,6 +504,7 @@ class KernelClient:
         files: Mapping[str, Sequence[UploadTuple]] | None = None,
         idempotency_key: str | None = None,
         timeout: float | None = None,
+        actor: str | None = None,
     ) -> TaskSubmitResult:
         """POST /tasks — multipart intake.
 
@@ -501,7 +519,11 @@ class KernelClient:
         `timeout` overrides the client default for this call: governed
         intake dispatches the pack pipeline synchronously inside the
         kernel request (app.py `_sync_execute`), so callers that expect
-        a completed run view should pass a wider bound."""
+        a completed run view should pass a wider bound.
+
+        `actor` is the session-bound `user:<id>` assertion (C10) — sent
+        as `X-Ewcp-Actor` so a governed write's `ProposedAction.requester`
+        binds the product user, not just the tenant."""
         # Always multipart — the kernel's intake contract is form fields
         # read via request.form() (app.py:2543). `(None, value)` tuples
         # render as plain fields inside the multipart body, so intent/
@@ -512,7 +534,11 @@ class KernelClient:
             form_fields.append(("tenant_id", (None, tenant_id)))
         form_fields += [(name, (None, value)) for name, value in (fields or {}).items()]
         form_fields += [(slot, (filename, body) if content_type is None else (filename, body, content_type)) for slot, members in (files or {}).items() for filename, body, content_type in members]
-        extra = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        extra: dict[str, str] = {}
+        if idempotency_key:
+            extra["Idempotency-Key"] = idempotency_key
+        if actor:
+            extra[ACTOR_HEADER] = actor
         request_kwargs: dict[str, Any] = {"files": form_fields, "headers": extra}
         if timeout is not None:
             request_kwargs["timeout"] = timeout
@@ -538,6 +564,7 @@ class KernelClient:
         execution_run_id: str | None = None,
         idempotency_key: str,
         contract_version: str = "1",
+        actor: str | None = None,
     ) -> InvokeResult:
         """POST /outcomes/{type}/run — the typed capability contract
         (contract_version=1). Always multipart so declared context fields
@@ -547,7 +574,10 @@ class KernelClient:
         replays the stored run on identical payload, so bounded transport
         retry is safe — retries reuse the SAME key and identical body.
         `invocation_id`/`execution_run_id` are the contract's correlation
-        fields, echoed back in the run view."""
+        fields, echoed back in the run view. `actor` is the session-bound
+        `user:<id>` assertion (C10) sent as `X-Ewcp-Actor` — required
+        whenever the capability is an `external_write` (its
+        `proposed_action.requester` must equal this principal)."""
         form: list[tuple[str, tuple]] = [("contract_version", (None, contract_version))]
         if tenant_id:
             form.append(("tenant_id", (None, tenant_id)))
@@ -557,12 +587,15 @@ class KernelClient:
             form.append(("execution_run_id", (None, execution_run_id)))
         form += [(key, (None, _ctx_scalar(value))) for key, value in (context or {}).items() if value is not None]
         form += [(slot, (filename, body) if content_type is None else (filename, body, content_type)) for slot, members in (files or {}).items() for filename, body, content_type in members]
+        extra = {"Idempotency-Key": idempotency_key}
+        if actor:
+            extra[ACTOR_HEADER] = actor
         try:
             resp = await self._request(
                 "POST",
                 f"/outcomes/{outcome_type}/run",
                 files=form,
-                headers={"Idempotency-Key": idempotency_key},
+                headers=extra,
                 allow_retry=True,
             )
         except httpx.HTTPStatusError as exc:
@@ -580,6 +613,7 @@ class KernelClient:
         fields: Mapping[str, str] | None = None,
         files: Mapping[str, Sequence[UploadTuple]] | None = None,
         timeout: float | None = None,
+        actor: str | None = None,
     ) -> dict[str, Any]:
         """POST /outcomes/{type}/run — explicit per-pack dispatch: the
         caller picks the outcome (kernel stamps intent from the spec's
@@ -591,7 +625,11 @@ class KernelClient:
         typed binding is `invoke_outcome`): transport never retries and
         the ExecutionRunMap row's owner+key unique index is the dedupe.
         Kernel `main` does dedupe (tenant, key) on this endpoint too —
-        contract_version/invocation_id fields are optional there."""
+        contract_version/invocation_id fields are optional there.
+
+        `actor` is the session-bound `user:<id>` assertion (C10), sent
+        as `X-Ewcp-Actor` so a governed write's requester binds the
+        product user."""
         form_fields: list[tuple[str, tuple]] = []
         if tenant_id:
             form_fields.append(("tenant_id", (None, tenant_id)))
@@ -600,6 +638,8 @@ class KernelClient:
         request_kwargs: dict[str, Any] = {"files": form_fields}
         if timeout is not None:
             request_kwargs["timeout"] = timeout
+        if actor:
+            request_kwargs["headers"] = {ACTOR_HEADER: actor}
         resp = await self._request(
             "POST",
             f"/outcomes/{outcome_type}/run",
@@ -629,7 +669,7 @@ class KernelClient:
             body["decision_id"] = decision_id
         if decided_by is not None:
             body["decided_by"] = decided_by
-        extra = {"X-Ewcp-Actor": actor} if actor else None
+        extra = {ACTOR_HEADER: actor} if actor else None
         resp = await self._request(
             "POST",
             f"/workruns/{workrun_id}/decisions",
