@@ -73,6 +73,10 @@ class EwcpCoreService:
         self.egress_policy = EgressPolicy(
             EgressPolicy.resolve_config(self.config),
             kernel_url=self._resolved.kernel_url,
+            tenant_id_getter=lambda: self.ewcp_tenant_id,
+            # Late-bound like tenant_id_getter: `self._store` only exists after
+            # `start()` binds the session factory — the getter defers the read.
+            store_getter=lambda: self._store,
         )
         self._model_policy = ModelPolicyConfig.resolve(self.config)
         self._transient_retry = TransientRetryPolicy.resolve(self.config)
@@ -107,6 +111,18 @@ class EwcpCoreService:
         renders frontend decision buttons read-only and 409s the route.
         """
         return bool(self.config.get("decision_user_binding", True))
+
+    @property
+    def ewcp_tenant_id(self) -> str | None:
+        """The deployment's EWCP tenant, stamped into runtime.context as
+        ``ewcp_tenant_id`` by the egress middleware so runs classify under
+        the tenant the kernel knows — not the product user. Resolved from
+        ``tenant_id`` (the kernel dispatch identity used by launch_run),
+        then ``invoke.tenant_id`` / ``budget.tenant_id``."""
+        tenant = self.config.get("tenant_id")
+        if tenant:
+            return str(tenant)
+        return self.invoke_tenant_id
 
     @property
     def invoke_tenant_id(self) -> str | None:
@@ -162,6 +178,11 @@ class EwcpCoreService:
             self._model_policy,
             policy,
             retry=self._transient_retry,
+            # Same authenticated sources the egress stamp pass uses — the
+            # admit resolves tenant/workrun from server state so forged
+            # context keys are dead input regardless of middleware ordering.
+            tenant_id_getter=lambda: self.ewcp_tenant_id,
+            store_getter=lambda: self._store,
         )
         return (MiddlewarePlacement(middleware, Placement.MODEL_PHYSICAL, AgentScope.BOTH, intercepting=True),)
 

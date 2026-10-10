@@ -8,10 +8,20 @@ retries re-enter it) and admits BEFORE the call:
     admit (precheck + worst-case reserve) -> handler -> settle (metered)
                                                    -> release (failed call)
 
-Identity: governed runs carry `runtime.context["kernel"]["workrun_id"]`
-(stamped by the ExecutionRun launcher, Task 2) and admit under that id —
-their budget account aggregates with the kernel-native WorkRun ledger.
-General runs admit under `runtime.context["run_id"]`.
+Identity: the admit computes it from authenticated server state — the
+ExecutionRunMap row the launch path bound to this thread/run resolves the
+governed workrun (client bytes never write that table), and the declared
+tenant comes from the deployment tenant getter. Governed runs admit under
+their workrun id — their budget account aggregates with the kernel-native
+WorkRun ledger. General runs admit under the server-owned
+`runtime.context["run_id"]`.
+
+`runtime.context["kernel"]` / `runtime.context["ewcp_tenant_id"]` are never
+read here: the client controls those keys until the egress middleware's
+stamp pass runs, and this middleware sits OUTER of it at MODEL_PHYSICAL —
+a wrap-level cleanup cannot defend the admit (PR #61 characterization).
+When the map cannot be read at all, identity is unverifiable and a capped
+deployment fails closed rather than risk an unaccounted governed spend.
 
 Deny semantics: a real 402 (cap reached) always denies — the handler is
 never invoked. When the admission *policy itself* is unavailable the
@@ -58,6 +68,7 @@ from deerflow.models.request_admission import AdmissionError
 from deerflow_extension_api import HostPolicySnapshot
 from langchain.agents.middleware import AgentMiddleware
 
+from .egress_policy import _select_bound_workrun
 from .kernel_client import BudgetDenied, KernelClient
 
 logger = logging.getLogger(__name__)
@@ -301,6 +312,15 @@ class ModelPolicyConfig:
     `general_on_policy_unavailable`: `local` (default) applies the host's
     declared token bounds; `allow` passes the call unadmitted; `deny`
     fails closed. Governed runs ignore this knob: they always deny.
+
+    `tenant_id` declares the tenant on a budget admission — the dev-mode
+    kernel (no API keys configured) requires it, and without it
+    `POST /budget/admissions` 422s and the admission lane degrades to
+    `local`, leaving the kernel ledger empty. `budget.tenant_id` wins,
+    falling back to `invoke.tenant_id` — the same operator tenant the
+    capability-invoke lane declares — so one tenant covers both lanes.
+    Keyed kernels ignore the declared tenant unless it mismatches the
+    key (403).
     """
 
     cap_usd: Decimal | None = None
@@ -318,25 +338,35 @@ class ModelPolicyConfig:
         if mode not in {"local", "allow", "deny"}:
             raise ValueError(f"general_on_policy_unavailable must be one of local|allow|deny, got {mode!r}")
         cap = budget.get("cap_usd")
+        invoke = (config or {}).get("invoke") or {}
+        invoke_tenant = invoke.get("tenant_id") if isinstance(invoke, Mapping) else None
         return cls(
             cap_usd=Decimal(str(cap)) if cap is not None else None,
-            tenant_id=str(budget["tenant_id"]) if budget.get("tenant_id") else None,
+            tenant_id=str(budget["tenant_id"]) if budget.get("tenant_id") else (str(invoke_tenant) if invoke_tenant else None),
             usd_per_1k_tokens=Decimal(str(budget.get("usd_per_1k_tokens", "0.004"))),
             max_output_tokens_per_call=int(budget.get("max_output_tokens_per_call", 4096)),
             general_on_policy_unavailable=mode,
         )
 
 
-def _identity(context: Mapping[str, Any]) -> tuple[str, bool]:
-    """(execution_run_id, governed). Governed identity is the kernel
-    workrun id stamped at launch; a general run attributes to its own
-    run id."""
-    kernel_ctx = context.get("kernel")
-    workrun_id = kernel_ctx.get("workrun_id") if isinstance(kernel_ctx, Mapping) else None
-    if workrun_id:
-        return str(workrun_id), True
-    run_id = context.get("run_id") or context.get("thread_id") or "unknown"
-    return str(run_id), False
+def _general_run_id(context: Mapping[str, Any]) -> str:
+    """The server-owned general-lane attribution key — `run_id`/`thread_id`
+    are set by the run worker and cannot be overridden by caller context."""
+    return str(context.get("run_id") or context.get("thread_id") or "unknown")
+
+
+async def _bound_workrun_id(store: Any, context: Mapping[str, Any]) -> str | None:
+    """The governed workrun the ExecutionRunMap binds to this run — the ONLY
+    governed-identity proof the admit accepts. Strict variant of the egress
+    gate's lookup: a store read failure PROPAGATES (egress's is fail-open),
+    so the caller can fail closed on an unverifiable identity."""
+    if store is None:
+        return None
+    thread_id = context.get("thread_id")
+    if not thread_id:
+        return None
+    records = await store.list_for_thread(str(thread_id))
+    return _select_bound_workrun(records, context.get("run_id"))
 
 
 def _est_input_tokens(messages: object) -> int:
@@ -430,20 +460,82 @@ class BudgetAdmissionMiddleware(AgentMiddleware):
         config: ModelPolicyConfig,
         policy: HostPolicySnapshot | None = None,
         retry: TransientRetryPolicy | None = None,
+        tenant_id_getter: Callable[[], str | None] | None = None,
+        store_getter: Callable[[], Any] | None = None,
     ) -> None:
         super().__init__()
         self._budget = budget_client
         self._config = config
         self._retry = retry or TransientRetryPolicy()
         self._local = LocalTokenBudget(policy or HostPolicySnapshot())
+        self._tenant_id_getter = tenant_id_getter
+        self._store_getter = store_getter
 
     def _context(self, request: Any) -> Mapping[str, Any]:
         context = getattr(getattr(request, "runtime", None), "context", None)
         return context if isinstance(context, Mapping) else {}
 
+    def _admission_tenant(self) -> str | None:
+        """Tenant declared on an admission: the deployment tenant getter (the
+        same authenticated source the egress stamp pass writes) first, then
+        the configured `budget.tenant_id` fallback. Never the context value
+        — that key is client-controllable until re-stamped."""
+        tenant = self._tenant_id_getter() if self._tenant_id_getter is not None else None
+        return tenant or self._config.tenant_id
+
+    async def _resolve_identity(self, context: Mapping[str, Any]) -> tuple[str, bool]:
+        """(execution_run_id, governed) resolved from server state.
+
+        No ExecutionRunMap bound (unstarted store) means no governed launch
+        could have been admitted — the run is general by construction. A
+        store read failure under a configured cap fails closed: an
+        unverifiable run might be governed, and a governed call must not
+        spend unaccounted."""
+        run_id = _general_run_id(context)
+        store = self._store_getter() if self._store_getter is not None else None
+        if store is None:
+            return run_id, False
+        try:
+            workrun_id = await _bound_workrun_id(store, context)
+        except Exception as exc:
+            if self._config.cap_usd is not None:
+                raise AdmissionError(f"ewcp budget identity unverifiable for run {run_id} — execution-run map unreadable, fail-closed under cap: {exc}") from exc
+            logger.warning("ewcp budget identity lookup failed for run %s — proceeding as general (no cap configured): %s", run_id, exc)
+            return run_id, False
+        if workrun_id:
+            return workrun_id, True
+        return run_id, False
+
+    def _resolve_identity_sync(self, context: Mapping[str, Any]) -> tuple[str, bool, bool]:
+        """(execution_run_id, governed, verifiable) for the sync wrap.
+
+        The map read is async; on a thread without a running loop it is
+        driven on a private loop. When no safe read exists (a live loop in
+        this thread, or the lookup itself failed) the identity is
+        unverifiable — the caller fails closed under a configured cap."""
+        run_id = _general_run_id(context)
+        store = self._store_getter() if self._store_getter is not None else None
+        if store is None:
+            return run_id, False, True
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            logger.warning("ewcp budget identity lookup skipped for run %s — sync wrap on a thread with a running loop; unverifiable", run_id)
+            return run_id, False, False
+        try:
+            workrun_id = asyncio.run(_bound_workrun_id(store, context))
+        except Exception:  # noqa: BLE001 — any lookup failure = unverifiable
+            logger.warning("ewcp budget identity lookup failed for run %s on the sync path — unverifiable", run_id, exc_info=True)
+            return run_id, False, False
+        if workrun_id:
+            return workrun_id, True, True
+        return run_id, False, True
+
     async def awrap_model_call(self, request: Any, handler: Callable) -> Any:
         context = self._context(request)
-        run_id, governed = _identity(context)
+        run_id, governed = await self._resolve_identity(context)
         est_input = _est_input_tokens(request.messages)
         reserve_tokens = est_input + self._config.max_output_tokens_per_call
         reserve_usd = Decimal(reserve_tokens) * self._config.usd_per_1k_tokens / Decimal(1000)
@@ -452,7 +544,7 @@ class BudgetAdmissionMiddleware(AgentMiddleware):
         if self._config.cap_usd is not None:
             try:
                 admission = await self._budget.admit(
-                    tenant_id=self._config.tenant_id,
+                    tenant_id=self._admission_tenant(),
                     execution_run_id=run_id,
                     cap_usd=self._config.cap_usd,
                     reserve_usd=reserve_usd,
@@ -519,9 +611,14 @@ class BudgetAdmissionMiddleware(AgentMiddleware):
     def wrap_model_call(self, request: Any, handler: Callable) -> Any:
         """Sync path: no kernel round-trip exists here — governed calls
         fail closed (an unaccounted governed call is worse than a denied
-        one); general calls consult the local token gate only."""
+        one); general calls consult the local token gate only. Identity
+        comes from the ExecutionRunMap like the async path; when it cannot
+        be read on this thread the run is unverifiable and a capped
+        deployment denies rather than risk an unaccounted governed call."""
         context = self._context(request)
-        run_id, governed = _identity(context)
+        run_id, governed, verifiable = self._resolve_identity_sync(context)
+        if not verifiable and self._config.cap_usd is not None:
+            raise AdmissionError(f"ewcp budget identity unverifiable for run {run_id} on the synchronous path — fail-closed under cap")
         if governed and self._config.cap_usd is not None:
             raise AdmissionError(f"ewcp governed run {run_id} cannot admit budget on the synchronous model path — use the async runtime")
         self._local.check(run_id, _est_input_tokens(request.messages), self._config.max_output_tokens_per_call)

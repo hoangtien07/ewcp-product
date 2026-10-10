@@ -7,10 +7,12 @@ import uuid
 from dataclasses import dataclass, field
 
 import httpx
+import pydantic
 from agent_sandbox import Sandbox as AioSandboxClient
 from agent_sandbox.core.api_error import ApiError
 
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX
+from deerflow.sandbox.exceptions import SandboxError, SandboxFileError
 from deerflow.sandbox.remote_list_dir import parse_remote_list_dir_output, remote_list_dir_command
 from deerflow.sandbox.sandbox import Sandbox, _validate_extra_env
 from deerflow.sandbox.search import GrepMatch, path_matches, should_ignore_path_under_root, truncate_line
@@ -35,6 +37,80 @@ _BASH_EXEC_UNSUPPORTED_ERROR = (
     "sandbox image to all-in-one-sandbox >= 1.9.3 (set `sandbox.image` in config.yaml, "
     "e.g. pin the tag `1.11.0`) and recreate the sandbox container, then try again."
 )
+
+# The AIO `v1/file/read` endpoint reports expected filesystem failures as
+# HTTP 200 with a ``{"success": false, "data": {error_type, exception_type,
+# message, ...}}`` envelope, which the agent_sandbox SDK's typed
+# ``ResponseFileReadResult`` cannot validate — its ``data.content`` and
+# ``data.file`` are required fields — so the SDK raises
+# ``pydantic.ValidationError`` on every such envelope instead of surfacing
+# the server's structured error. The helpers below map the envelope onto
+# the builtin exception vocabulary ``read_file_tool`` renders designed
+# messages for (binary -> the bash+pandas hint, missing -> File not
+# found, etc.), with a readable ``SandboxError`` for unrecoverable
+# shapes. Deeper fix (SDK model or server schema) is a separate,
+# upstream-side concern.
+_AIO_FILE_ERROR_EXCEPTIONS: dict[str, type[BaseException]] = {
+    "FileNotFoundError": FileNotFoundError,
+    "PermissionError": PermissionError,
+    "IsADirectoryError": IsADirectoryError,
+    "NotADirectoryError": NotADirectoryError,
+    "OSError": OSError,
+    "IOError": OSError,
+}
+
+_AIO_FILE_ERRNO_EXCEPTIONS: dict[str, type[BaseException]] = {
+    "ENOENT": FileNotFoundError,
+    "ENOTDIR": NotADirectoryError,
+    "EISDIR": IsADirectoryError,
+    "EACCES": PermissionError,
+    "EPERM": PermissionError,
+}
+
+
+def _aio_file_error_from_body(body: object) -> BaseException | None:
+    """Map an AIO file-API ``success:false`` error envelope to a builtin
+    exception. Returns None for non-envelope bodies (the caller keeps the
+    generic ``Error: ...`` fallback)."""
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, dict):
+        return None
+    if body.get("success") is not False and not data.get("error_type"):
+        return None
+    message = str(data.get("message") or body.get("message") or "")
+    if data.get("error_type") == "decode_error" or data.get("exception_type") == "UnicodeDecodeError":
+        # Binary file: read_file_tool renders its designed "use bash with
+        # pandas/openpyxl" hint off the UnicodeDecodeError branch.
+        return UnicodeDecodeError("utf-8", b"", 0, 1, message or "undecodable bytes")
+    exc_cls = _AIO_FILE_ERROR_EXCEPTIONS.get(str(data.get("exception_type") or "")) or _AIO_FILE_ERRNO_EXCEPTIONS.get(str(data.get("errno_name") or ""))
+    if exc_cls is not None:
+        return exc_cls(message)
+    if message:
+        return SandboxFileError(message, path=str(data.get("path") or "") or None, operation=str(data.get("operation") or "read"))
+    return None
+
+
+def _aio_file_read_error(client: AioSandboxClient, path: str, kwargs: dict, cause: Exception) -> BaseException:
+    """Recover the server's structured ``success:false`` error after the
+    SDK's typed ``ResponseFileReadResult`` parse rejected it: re-issue
+    the same ``v1/file/read`` request through the SDK's own HTTP layer
+    (base URL, headers, timeouts preserved) and map the raw body. The
+    extra round-trip only happens on the error path."""
+    body: object = None
+    try:
+        response = client._client_wrapper.httpx_client.request(
+            "v1/file/read",
+            method="POST",
+            json={"file": path, **kwargs},
+            headers={"content-type": "application/json"},
+        )
+        body = response.json()
+    except Exception:
+        pass
+    mapped = _aio_file_error_from_body(body)
+    if mapped is not None:
+        return mapped
+    return SandboxError(f"sandbox file/read {path} returned a response the agent_sandbox SDK could not parse ({type(cause).__name__})")
 
 
 @dataclass
@@ -1010,6 +1086,18 @@ class AioSandbox(Sandbox):
                 kwargs["end_line"] = max(end_line, 0)
             result = self._client.file.read_file(file=path, **kwargs)
             return result.data.content if result.data else ""
+        except pydantic.ValidationError as exc:
+            # AIO returned a `success:false` error envelope the SDK model
+            # cannot represent — recover the structured error so the tool
+            # layer renders its designed messages (incl. the binary-file
+            # bash+pandas hint) instead of a pydantic crash string.
+            raise _aio_file_read_error(self._client, path, kwargs, exc) from exc
+        except ApiError as exc:
+            mapped = _aio_file_error_from_body(exc.body)
+            if mapped is not None:
+                raise mapped from exc
+            logger.error(f"Failed to read file in sandbox: {exc}")
+            return f"Error: {exc}"
         except Exception as e:
             logger.error(f"Failed to read file in sandbox: {e}")
             return f"Error: {e}"

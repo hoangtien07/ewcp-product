@@ -10,6 +10,9 @@ pin the actionable error contract and guard the normal text path.
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
 
 from deerflow.sandbox.local.local_sandbox import LocalSandbox, PathMapping
 from deerflow.sandbox.tools import read_file_tool
@@ -46,6 +49,56 @@ def test_read_file_tool_binary_file_returns_actionable_hint(tmp_path, monkeypatc
     assert "Unexpected error" not in result, result
     assert "binary" in result.lower(), result
     # The model must be steered to bash + pandas/openpyxl, not another read_file.
+    assert "bash" in result.lower(), result
+
+
+def test_read_file_tool_aio_binary_error_envelope_returns_actionable_hint(monkeypatch) -> None:
+    """GP-01: AIO `v1/file/read` answers binary reads with a 200
+    ``success:false`` envelope that crashes the agent_sandbox SDK's typed
+    parse (ResponseFileReadResult needs data.content/data.file). The
+    adapter must recover the structured error so the model sees this
+    designed hint — never a pydantic crash string."""
+    import pydantic
+    from agent_sandbox.core.pydantic_utilities import parse_obj_as
+    from agent_sandbox.types.response_file_read_result import ResponseFileReadResult
+
+    from deerflow.community.aio_sandbox.aio_sandbox import AioSandbox
+
+    body = {
+        "success": False,
+        "message": "Failed to read file: 'utf-8' codec can't decode byte 0x82 in position 9",
+        "data": {
+            "path": "/mnt/user-data/uploads/data.xlsx",
+            "operation": "read",
+            "message": "'utf-8' codec can't decode byte 0x82 in position 9: invalid start byte",
+            "error_type": "decode_error",
+            "exception_type": "UnicodeDecodeError",
+            "retryable": False,
+        },
+    }
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("deerflow.community.aio_sandbox.aio_sandbox.AioSandboxClient", MagicMock())
+        sandbox = AioSandbox(id="aio:t1", base_url="http://localhost:8080")
+    try:
+        parse_obj_as(ResponseFileReadResult, body)
+        raise AssertionError("the error envelope unexpectedly validated")
+    except pydantic.ValidationError as exc:
+        sandbox._client.file.read_file = MagicMock(side_effect=exc)
+    sandbox._client._client_wrapper.httpx_client.request = MagicMock(return_value=SimpleNamespace(json=lambda: body))
+
+    runtime = SimpleNamespace(state={"sandbox": {"sandbox_id": "aio:t1"}}, context={"thread_id": "t1"})
+    monkeypatch.setattr("deerflow.sandbox.tools.ensure_sandbox_initialized", lambda runtime: sandbox)
+    monkeypatch.setattr("deerflow.sandbox.tools.ensure_thread_directories_exist", lambda runtime: None)
+
+    result = read_file_tool.func(
+        runtime=runtime,
+        description="read uploaded excel",
+        path="/mnt/user-data/uploads/data.xlsx",
+    )
+
+    assert "Unexpected error" not in result, result
+    assert "ValidationError" not in result, result
+    assert "binary" in result.lower(), result
     assert "bash" in result.lower(), result
 
 
