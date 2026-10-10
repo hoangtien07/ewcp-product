@@ -54,6 +54,7 @@ function stubAll(
   binding: boolean,
   run: typeof RUN = RUN,
   workrun: typeof WORKRUN = WORKRUN,
+  joinBody = "event: end\ndata: null\n\n",
 ) {
   const calls: { url: string; body?: unknown }[] = [];
   rs.stubGlobal(
@@ -83,7 +84,7 @@ function stubAll(
         body = { workrun };
       } else if (u === "/api/threads/t-1/runs/r-1/join") {
         return Promise.resolve(
-          new Response("event: end\ndata: null\n\n", {
+          new Response(joinBody, {
             status: 200,
             headers: { "Content-Type": "text/event-stream" },
           }),
@@ -192,6 +193,124 @@ describe("ExecutionRunThread", () => {
     await waitFor(() =>
       expect(screen.getByText("Duyệt kết quả?")).toBeTruthy(),
     );
+  });
+
+  // --- N04 — SSE recovery honesty ------------------------------------------
+  // (a) The stream dies mid-run with NO terminal frame: the pane refreshes
+  // the record once, then stops observing — today it shows the last-known
+  // status as a settled display with no drop marker.
+  test("stream drop mid-run keeps showing the last-known status with no marker (pinned)", async () => {
+    const calls = stubAll(
+      true,
+      { ...RUN, status: "running" },
+      { ...WORKRUN, status: "running", pending_questions: [] },
+      "event: values\ndata: {}\n\n", // EOF — no `end`/`error` frame
+    );
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    // the stream ended and the one-shot refresh ran
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.url === "/api/ewcp/runs/er-1?refresh=1"),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Đã tiếp nhận")).toBeTruthy(),
+    );
+    // pinned: no live indicator AND no disconnect marker — a silent frozen
+    // snapshot indistinguishable from a settled "accepted" display
+    expect(screen.queryByText(/trực tiếp/)).toBeNull();
+  });
+
+  test("stream drop mid-run marks the live observation as lost", async () => {
+    stubAll(
+      true,
+      { ...RUN, status: "running" },
+      { ...WORKRUN, status: "running", pending_questions: [] },
+      "event: values\ndata: {}\n\n",
+    );
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() =>
+      expect(screen.getByText(/Mất kết nối trực tiếp/)).toBeTruthy(),
+    );
+    // the last-known record still renders — the marker annotates, not hides
+    expect(screen.getByText("Đã tiếp nhận")).toBeTruthy();
+  });
+
+  test("a clean `end` frame does not claim a dropped stream", async () => {
+    stubAll(
+      true,
+      { ...RUN, status: "running" },
+      { ...WORKRUN, status: "candidate_complete" },
+      "event: values\ndata: {}\n\nevent: end\ndata: {}\n\n",
+    );
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() =>
+      expect(screen.getByText("Duyệt kết quả?")).toBeTruthy(),
+    );
+    expect(screen.queryByText(/Mất kết nối trực tiếp/)).toBeNull();
+  });
+
+  // (b) Server `gap` frames must not blend into the feed as ordinary events
+  // — pin that the raw marker reaches the user-facing log.
+  test("a server gap frame surfaces in the activity feed", async () => {
+    stubAll(
+      true,
+      { ...RUN, status: "running" },
+      { ...WORKRUN, status: "running", pending_questions: [] },
+      'event: gap\ndata: {"code":"stream_replay_gap","recovery":"reload_durable_state"}\n\n',
+    );
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() =>
+      expect(screen.getByText(/stream_replay_gap/)).toBeTruthy(),
+    );
+  });
+
+  // (b′) The pane never sends Last-Event-ID, so its own recovery case is a
+  // tail-only replay after eviction — pinned as silent truncation today
+  // (documented cosmetic limit in docs/vnext/A7A_SSE_RECONNECT.md).
+  test("tail-only replay renders contiguously with no truncation marker (pinned)", async () => {
+    stubAll(
+      true,
+      { ...RUN, status: "running" },
+      { ...WORKRUN, status: "running", pending_questions: [] },
+      "event: values\ndata: {\"seq\":5}\n\nevent: values\ndata: {\"seq\":6}\n\nevent: end\ndata: {}\n\n",
+    );
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    // the `end` frame itself renders too — 2 tail values + end, contiguous
+    await waitFor(() =>
+      expect(screen.getByText(/Hoạt động agent \(3 sự kiện\)/)).toBeTruthy(),
+    );
+    expect(screen.queryByText(/stream_replay_gap/)).toBeNull();
+  });
+
+  // (c) Kernel truth vs the launcher record: a completed product run whose
+  // kernel workrun still runs must not claim completion.
+  test("a completed launcher record with a still-running kernel workrun claims no completion", async () => {
+    stubAll(true, RUN /* completed */, {
+      ...WORKRUN,
+      status: "running",
+      pending_questions: [],
+    });
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() =>
+      expect(screen.getByText("Đã tiếp nhận")).toBeTruthy(),
+    );
+    expect(screen.getByText(/Đang xử lý/)).toBeTruthy();
+    expect(screen.queryByText("Agent hoàn tất")).toBeNull();
+  });
+
+  test("a completed launcher record with a failed kernel workrun shows UNKNOWN, not finished", async () => {
+    stubAll(true, RUN /* completed */, {
+      ...WORKRUN,
+      status: "failed",
+      pending_questions: [],
+    });
+    render(<ExecutionRunThread executionRunId="er-1" />);
+    await waitFor(() =>
+      expect(screen.getByText("Không rõ")).toBeTruthy(),
+    );
+    expect(screen.getByText(/Lỗi/)).toBeTruthy();
+    expect(screen.queryByText("Agent hoàn tất")).toBeNull();
   });
 
   test("pending_interrupt shows the resume box and posts the payload", async () => {
