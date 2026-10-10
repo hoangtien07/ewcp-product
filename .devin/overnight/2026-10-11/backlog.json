@@ -1,0 +1,19 @@
+{
+  "meta": {"created": "2026-10-10T19:05Z", "spec": "EWCP_DEVIN_OVERNIGHT_V2_2026-10-11", "lead": "devin-3fe1813cf30d4a4eba578bc72876f4c5",
+    "input_shas": {"kernel": "f720e023e6fe", "product": "e0ac3aea1ba3", "deploy": "69f91a320a82", "erp": "ebc414052ca9"},
+    "env_limits": ["devin-box ephemeral: docker state dies on restart (measured)", "no CF token/DNS/host", "no paid LLM APIs", "no merge of trust-boundary PRs"]},
+  "items": [
+    {"id": "N00", "pri": "P0", "cat": "groundwork", "owner": "lead", "acceptance": ">=1 existing test reproduced + env limits recorded", "status": "PASS", "evidence": ["smoke: backend tests/test_bench_provider_eval.py 7/7 @ e0ac3aea"]},
+    {"id": "N01", "pri": "P1", "cat": "truth-projection", "owner": "w1", "acceptance": "red->green pos+neg fixtures: missing file / forged claim / text-only / invalid artifact / pending approval / sealed workrun; no kernel seal change", "status": "PENDING"},
+    {"id": "N02", "pri": "P1", "cat": "offline-evaluator", "owner": "w1", "acceptance": "wrong trace red, golden control green, stable schema, tier labels, no network", "status": "PENDING"},
+    {"id": "N03", "pri": "P1", "cat": "tool-failure-taxonomy", "owner": "w1", "acceptance": "red regression for tool-call failure classes; bounded recovery or MODEL_LIMIT label", "status": "PENDING"},
+    {"id": "N04", "pri": "P1", "cat": "sse-recovery-honesty", "owner": "w1", "acceptance": "browser test demonstrates cursor/reconnect behavior, no false loss/dup; RFC if redesign needed", "status": "PENDING"},
+    {"id": "N05", "pri": "P1", "cat": "workrun-freshness", "owner": "w1", "acceptance": "synthetic delayed governed state -> no stale pending-approval card or honest refresh cue", "status": "PENDING"},
+    {"id": "N06", "pri": "P1", "cat": "audit", "owner": "w1", "acceptance": "deploy #6 file:line review + negative tests synthetic-only + ACCEPT/REVISE/REJECT", "status": "PENDING"},
+    {"id": "N07", "pri": "P1", "cat": "audit", "owner": "w1", "acceptance": "ERP direct-REST/RPC bypass negative matrix + bridge approval binding; P0 gaps => HOLD report", "status": "PENDING"},
+    {"id": "N08", "pri": "P2", "cat": "cost-observability", "owner": "w1", "acceptance": "missing data => null/unknown not zeros; before/after support fixed fixture", "status": "PENDING"},
+    {"id": "N09", "pri": "P2", "cat": "model-qual-dossier", "owner": "w1", "acceptance": "provider x lane x sensitivity table + next-day run commands, no network calls", "status": "PENDING"},
+    {"id": "N10", "pri": "P2", "cat": "repro-sweep", "owner": "w1", "acceptance": "stale docs/false-PASS validators documented + safe fixes only", "status": "PENDING"},
+    {"id": "N11", "pri": "P2", "cat": "integration-review", "owner": "lead", "acceptance": "all overnight PRs evidence-checked; morning decision table", "status": "PENDING"}
+  ]
+}
