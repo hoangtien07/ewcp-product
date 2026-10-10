@@ -76,6 +76,76 @@ class TestRunTask:
         assert s["estimated_cost"] is None
 
 
+class _UnmeteredModel(GenericFakeChatModel):
+    """Fake model whose responses carry NO usage_metadata — the wire shape
+    an arm produces when the provider never reports token usage."""
+
+    def bind_tools(self, tools, **kwargs):  # noqa: D102
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # noqa: D102
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="42"))])
+
+
+class _MeteredModel(_UnmeteredModel):
+    """Same answer, but the provider reports real usage per call."""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # noqa: D102
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        return ChatResult(
+            generations=[
+                ChatGeneration(
+                    message=AIMessage(
+                        content="42",
+                        usage_metadata={"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
+                    )
+                )
+            ]
+        )
+
+
+class TestCostObservability:
+    """N08 — unmeasured usage must surface as null/unknown, never a
+    fabricated 0 (the actual_spend_usd vs estimated_cost_usd class)."""
+
+    def test_unmetered_task_tokens_null_not_zero(self):
+        result = run_task(_UnmeteredModel(messages=iter([])), TASK)
+        assert result["completed"] is True
+        assert result["input_tokens"] is None
+        assert result["output_tokens"] is None
+
+    def test_unmetered_summary_totals_null_not_zero(self):
+        s = summarize([run_task(_UnmeteredModel(messages=iter([])), TASK)], wall_ms=50, parallel=1)
+        assert s["total_input_tokens"] is None
+        assert s["total_output_tokens"] is None
+        assert s["token_usage_coverage"] == "unmeasured"
+
+    def test_metered_tokens_stay_measured(self):
+        result = run_task(_MeteredModel(messages=iter([])), TASK)
+        assert result["input_tokens"] == 11
+        assert result["output_tokens"] == 7
+        s = summarize([result], wall_ms=50, parallel=1)
+        assert s["total_input_tokens"] == 11
+        assert s["total_output_tokens"] == 7
+        assert s["token_usage_coverage"] == "measured"
+
+    def test_partial_coverage_aggregates_only_measured(self):
+        s = summarize(
+            [
+                run_task(_MeteredModel(messages=iter([])), TASK),
+                run_task(_UnmeteredModel(messages=iter([])), TASK),
+            ],
+            wall_ms=50,
+            parallel=1,
+        )
+        assert s["total_input_tokens"] == 11
+        assert s["total_output_tokens"] == 7
+        assert s["token_usage_coverage"] == "partial"
+
+
 class TestArms:
     def test_workers_ai_requires_env(self, monkeypatch):
         monkeypatch.delenv("CF_ACCOUNT_ID", raising=False)
