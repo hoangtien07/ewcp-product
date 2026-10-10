@@ -208,6 +208,40 @@ describe("ewcp api", () => {
     ]);
   });
 
+  test("joinRunStream surfaces a server gap frame verbatim", async () => {
+    // N04 (b): a resuming consumer's `stream_replay_gap` must reach the
+    // handler as its own event — not be dropped or blended into a data
+    // frame — so the caller can mark the replay boundary.
+    const payload =
+      'event: gap\ndata: {"code":"stream_replay_gap","requested_event_id":"1-0","recovery":"reload_durable_state"}\n\n';
+    const body = new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(payload));
+        c.close();
+      },
+    });
+    rs.stubGlobal(
+      "fetch",
+      rs.fn((_u: string, _i?: RequestInit) =>
+        Promise.resolve(new Response(body, { status: 200 })),
+      ),
+    );
+    const events: { event: string; data: unknown }[] = [];
+    await joinRunStream("/api/threads/t-1/runs/r-1/join", {
+      onEvent: (e) => events.push(e),
+    });
+    expect(events).toEqual([
+      {
+        event: "gap",
+        data: {
+          code: "stream_replay_gap",
+          requested_event_id: "1-0",
+          recovery: "reload_durable_state",
+        },
+      },
+    ]);
+  });
+
   test("joinRunStream throws EwcpError on non-2xx", async () => {
     rs.stubGlobal(
       "fetch",
