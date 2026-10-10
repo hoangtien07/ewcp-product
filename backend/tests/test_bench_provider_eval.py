@@ -146,6 +146,88 @@ class TestCostObservability:
         assert s["token_usage_coverage"] == "partial"
 
 
+class _FlakyUsageModel(GenericFakeChatModel):
+    """3 inference calls; the middle one carries no usage_metadata — a task
+    whose coverage is partial at call granularity (2 of 3 calls measured)."""
+
+    def bind_tools(self, tools, **kwargs):  # noqa: D102
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # noqa: D102
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        usage = {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
+        ai_replies = sum(1 for m in messages if m.type == "ai")
+        if ai_replies == 0:
+            msg = AIMessage(
+                content="",
+                tool_calls=[{"id": "c1", "name": "add", "args": {"a": 1, "b": 2}}],
+                usage_metadata=usage,
+            )
+        elif ai_replies == 1:
+            msg = AIMessage(
+                content="",
+                tool_calls=[{"id": "c2", "name": "now", "args": {}}],
+            )
+        else:
+            msg = AIMessage(content="42", usage_metadata=usage)
+        return ChatResult(generations=[ChatGeneration(message=msg)])
+
+
+class TestPerCallUsageCoverage:
+    """Council W9 — token-usage coverage is measured PER INFERENCE CALL:
+    a task where 2 of 3 calls report usage is 'partial', never 'measured'."""
+
+    def test_partial_call_coverage_is_not_full(self):
+        result = run_task(_FlakyUsageModel(messages=iter([])), TASK)
+        assert result["inference_calls"] == 3
+        assert result["usage_calls"] == 2
+        assert result["usage_call_coverage"] == "partial"
+
+    def test_partial_call_coverage_aggregates_partial(self):
+        s = summarize([run_task(_FlakyUsageModel(messages=iter([])), TASK)], wall_ms=50, parallel=1)
+        assert s["token_usage_coverage"] == "partial"
+        assert s["calls_with_usage"] == 2
+        assert s["total_inference_calls"] == 3
+
+    def test_full_call_coverage(self):
+        result = run_task(_MeteredModel(messages=iter([])), TASK)
+        assert result["usage_calls"] == result["inference_calls"]
+        assert result["usage_call_coverage"] == "full"
+
+    def test_no_calls_means_no_coverage(self):
+        class _Failing(GenericFakeChatModel):
+            def bind_tools(self, tools, **kwargs):
+                return self
+
+            def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+                raise RuntimeError("boom")
+
+        result = run_task(_Failing(messages=iter([])), TASK)
+        assert result["inference_calls"] == 0
+        assert result["usage_calls"] == 0
+        assert result["usage_call_coverage"] == "none"
+        # None-when-unmeasured contract preserved
+        assert result["input_tokens"] is None
+        assert result["output_tokens"] is None
+
+    def test_unmetered_call_coverage_none(self):
+        result = run_task(_UnmeteredModel(messages=iter([])), TASK)
+        assert result["usage_calls"] == 0
+        assert result["usage_call_coverage"] == "none"
+
+    def test_mixed_task_coverage_still_partial(self):
+        s = summarize(
+            [
+                run_task(_MeteredModel(messages=iter([])), TASK),
+                run_task(_FlakyUsageModel(messages=iter([])), TASK),
+            ],
+            wall_ms=50,
+            parallel=1,
+        )
+        assert s["token_usage_coverage"] == "partial"
+
+
 class TestArms:
     def test_workers_ai_requires_env(self, monkeypatch):
         monkeypatch.delenv("CF_ACCOUNT_ID", raising=False)
