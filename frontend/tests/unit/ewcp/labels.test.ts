@@ -242,6 +242,88 @@ describe("lifecycleStatus — WP-A6 unified status vocabulary", () => {
     );
   });
 
+  // N01 false-success fixtures (EWCP_DEVIN_OVERNIGHT_V2_2026-10-11):
+  // `completed` is lifecycle truth only — the deliverable-integrity flag
+  // (F2) is the delivery verdict. A run whose claimed artifacts failed the
+  // existence probe must NOT surface the finished checkpoint, while a
+  // legit text-only answer must not fail either.
+  describe("integrity-aware completion projection (N01)", () => {
+    const generalRun = (integrity_flag?: string | null) =>
+      ({
+        ...GOVERNED_EXECUTION_RUN,
+        workrun_id: null,
+        task_mode: "general",
+        status: "completed",
+        integrity_flag,
+      }) as typeof GOVERNED_EXECUTION_RUN;
+
+    test("required-but-missing file claims no finished checkpoint", () => {
+      expect(
+        lifecycleStatus(
+          generalRun('claimed_artifacts_missing:["outputs/report.md"]'),
+          null,
+        ),
+      ).not.toBe("agent_finished");
+    });
+
+    test("forged completion claim (missing artifacts) projects UNKNOWN", () => {
+      expect(
+        lifecycleStatus(
+          generalRun('claimed_artifacts_missing:["outputs/a.csv","b.md"]'),
+          null,
+        ),
+      ).toBe("UNKNOWN");
+    });
+
+    test("produced-but-invalid artifact (empty) claims no checkpoint", () => {
+      // an empty produced file is flagged `claimed_artifacts_missing` by
+      // the probe (size > 0 required) — same false-success shape
+      expect(
+        lifecycleStatus(
+          generalRun('claimed_artifacts_missing:["outputs/empty.csv"]'),
+          null,
+        ),
+      ).toBe("UNKNOWN");
+    });
+
+    test("a legit text-only answer must NOT fail", () => {
+      // no_claims: the task asked for prose and the run claimed nothing —
+      // absence of deliverables is the correct outcome
+      expect(lifecycleStatus(generalRun("no_claims"), null)).toBe(
+        "agent_finished",
+      );
+      // verified claims + a still-unassessed row keep the checkpoint too
+      expect(lifecycleStatus(generalRun("verified"), null)).toBe(
+        "agent_finished",
+      );
+      expect(lifecycleStatus(generalRun(null), null)).toBe("agent_finished");
+      expect(lifecycleStatus(generalRun(undefined), null)).toBe(
+        "agent_finished",
+      );
+    });
+
+    test("pending approval does not claim completion", () => {
+      // governed candidate_complete/awaiting_approval: the agent's part is
+      // done but the human gate is open — never the sealed checkpoint
+      const wr = (status: string) =>
+        ({ ...VERIFIED_RUN_VIEW, status }) as typeof VERIFIED_RUN_VIEW;
+      for (const s of ["candidate_complete", "awaiting_approval"]) {
+        expect(lifecycleStatus(GOVERNED_EXECUTION_RUN, wr(s)), s).toBe(
+          "agent_finished",
+        );
+        expect(lifecycleStatus(GOVERNED_EXECUTION_RUN, wr(s)), s).not.toBe(
+          "verified",
+        );
+      }
+    });
+
+    test("a sealed WorkRun stays verified", () => {
+      expect(lifecycleStatus(GOVERNED_EXECUTION_RUN, VERIFIED_RUN_VIEW)).toBe(
+        "verified",
+      );
+    });
+  });
+
   test("every lifecycle token has a Vietnamese label", () => {
     for (const [k, v] of Object.entries(LIFECYCLE_LABEL)) {
       expect(v, `missing label for ${k}`).toBeTruthy();
