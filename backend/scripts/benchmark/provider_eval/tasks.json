@@ -1,0 +1,32 @@
+[
+  {
+    "id": "t1-echo",
+    "prompt": "Reply with exactly the word: pong",
+    "expect_regex": "^\\s*pong\\s*$",
+    "use_tool": false
+  },
+  {
+    "id": "t2-arith-tool",
+    "prompt": "Use the add tool to compute 17 + 25. Reply with only the number.",
+    "expect_regex": "42",
+    "use_tool": true
+  },
+  {
+    "id": "t3-two-step-tool",
+    "prompt": "First call add(3, 4), then call add(10, 20). Reply with both results separated by a comma.",
+    "expect_regex": "7\\s*,\\s*30",
+    "use_tool": true
+  },
+  {
+    "id": "t4-reasoning",
+    "prompt": "A train travels 60 km in 45 minutes. What is its average speed in km/h? Reply with only the number.",
+    "expect_regex": "80",
+    "use_tool": false
+  },
+  {
+    "id": "t5-instruction",
+    "prompt": "List exactly three primary colors as a comma-separated lowercase list.",
+    "expect_regex": "red\\s*,\\s*(blue|yellow|green)",
+    "use_tool": false
+  }
+]
