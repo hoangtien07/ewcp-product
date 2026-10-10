@@ -115,3 +115,44 @@ Sibling extension tests pin the remaining advisory surfaces:
 - The note fires on successful results too — intentional (the arg still did
   nothing), but a chatty edge case exists if a tool's schema legitimately
   tolerates extras under `extra='ignore'`; none of the measured tools do.
+
+## Council review addendum (W9)
+
+Independent regression check of the `tool_arg_feedback` middleware against the
+DeerFlow execution contract. Verdict: **no integration regression** — the
+middleware is observational end-to-end and cannot alter execution.
+
+Verified mechanically:
+
+- **Cannot alter tool-call args or results.** Registered
+  `intercepting=False` (`ewcp-core/plugin.py`: `MiddlewarePlacement(mw,
+  Placement.TOOL_VISIBLE, AgentScope.BOTH, intercepting=False)`), so the host
+  wraps it in `IsolatedMiddleware`
+  (`packages/harness/deerflow/extensions/isolation.py`): `tracked_handler`
+  always invokes `handler(request)` with the **original** request — an
+  extension physically cannot substitute args or the result object — and a
+  hook exception falls through to `return handler(request)` (fail-open).
+- **Cannot reorder calls/results.** The real handler is invoked exactly once
+  inside `wrap_tool_call`/`awrap_tool_call`; annotation happens post-handler
+  on the result's content. The middleware emits no tool calls of its own, so
+  call and result ordering are untouched.
+- **Runs on all agent scopes.** `AgentScope.BOTH` mounts at both
+  `compose_with_extensions` call sites — `AgentScope.LEAD`
+  (`lead_agent/agent.py`) and `AgentScope.SUBAGENT`
+  (`tool_error_handling_middleware.py`).
+- **No double-annotation on retries.** `_annotate_message` skips results whose
+  content already carries an `ignored argument(s) {dropped}:` note, and
+  `append_tool_transform` stamps `deerflow_tool_transforms`, so re-processing
+  the same message never duplicates the note; each *new* malformed call gets
+  its own note (intended).
+
+Noted limits (not regressions — consistent with the doc's own residual risks):
+
+- The "dropped before execution" claim is only emitted when the tool schema
+  actually rejects extras; `_schema_arg_names` returns `None` for
+  `extra='allow'` or unreadable schemas, so no overclaim fires there.
+- A dropped `format`-shaping arg can still yield a wrong-shaped success — the
+  note is post-execution and teaches the next call only (documented bound).
+
+17/17 extension tests green on this branch; `ruff check` / `ruff format`
+clean. No code change required.
