@@ -370,6 +370,21 @@ def _deny_marker(message: Any) -> dict[str, Any] | None:
     return None
 
 
+def _select_bound_workrun(records: Sequence[Any], run_id: Any) -> str | None:
+    """Pick the governed workrun among ExecutionRunMap rows for one thread:
+    the row matching this run_id first, then the thread's latest governed
+    binding — a governed thread's later runs (new run_ids) stay under the
+    same workrun. Invocation rows (``task_mode=invoke``) belong to a
+    capability call's account, never to the calling run's identity."""
+    candidates = [r for r in records if getattr(r, "task_mode", None) != INVOKE_TASK_MODE and getattr(r, "workrun_id", None)]
+    for record in candidates:
+        if run_id and record.run_id == str(run_id):
+            return str(record.workrun_id)
+    if candidates:
+        return str(candidates[0].workrun_id)
+    return None
+
+
 async def _governed_workrun_id(store: Any, context: Mapping[str, Any]) -> str | None:
     """Resolve this run's governed workrun identity from authenticated server
     state — the ExecutionRunMap row the launch path (api_routes → RunLauncher
@@ -377,11 +392,8 @@ async def _governed_workrun_id(store: Any, context: Mapping[str, Any]) -> str | 
     so a workrun_id resolved here cannot be forged. ``thread_id``/``run_id``
     in runtime.context are server-stamped (caller context cannot override
     them), which is what makes the lookup trustworthy. Mirrors the precedence
-    in ``invoke_tools._execution_run_id``: the row matching this run_id
-    first, then the thread's latest governed binding — a governed thread's
-    later runs (new run_ids) stay under the same workrun. Invocation rows
-    (``task_mode=invoke``) belong to a capability call's account, never to
-    the calling run's identity."""
+    in ``invoke_tools._execution_run_id`` (same selection as
+    ``_select_bound_workrun``)."""
     if store is None:
         return None
     thread_id = context.get("thread_id")
@@ -392,14 +404,7 @@ async def _governed_workrun_id(store: Any, context: Mapping[str, Any]) -> str | 
     except Exception:  # noqa: BLE001 — identity lookup must not break the egress gate
         logger.warning("ewcp egress: governed identity lookup failed for thread %s", thread_id, exc_info=True)
         return None
-    candidates = [r for r in records if getattr(r, "task_mode", None) != INVOKE_TASK_MODE and r.workrun_id]
-    run_id = context.get("run_id")
-    for record in candidates:
-        if run_id and record.run_id == str(run_id):
-            return str(record.workrun_id)
-    if candidates:
-        return str(candidates[0].workrun_id)
-    return None
+    return _select_bound_workrun(records, context.get("run_id"))
 
 
 class EgressPolicy:
@@ -430,9 +435,11 @@ class EgressPolicy:
         to ``user_id`` — an unclassified, sensitive identity; unconfigured →
         the key is removed so resolution fails closed), and
         ``kernel.workrun_id`` from the ExecutionRunMap binding the governed
-        launch path wrote — preserving the governed identity api_routes
-        injects at launch so ``model_policy._identity`` attributes budget
-        correctly, while a forged workrun dies with the strip.
+        launch path wrote — the governed identity api_routes injects at
+        launch, still consumed by the egress checks below and the invoke
+        lane's run binding (``invoke_tools._execution_run_id``); budget
+        admission resolves the same map itself and never reads this stamp —
+        a forged workrun dies with the strip.
 
         Mutates a dict context in place (the live runtime view tools read);
         immutable mappings get a stamped copy for the checks only.

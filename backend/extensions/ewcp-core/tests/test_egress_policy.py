@@ -34,7 +34,7 @@ from ewcp_core.egress_policy import (
 )
 from ewcp_core.execution_run_store import ExecutionRunRecord, ExecutionRunStore
 from ewcp_core.invoke_tools import INVOKE_TASK_MODE
-from ewcp_core.model_policy import _identity
+from ewcp_core.model_policy import _bound_workrun_id, _general_run_id
 
 # --------------------------------------------------------------------------
 # fakes
@@ -875,9 +875,10 @@ class TestTenantPropagation:
 # ``kernel.workrun_id`` is server-owned: the ExecutionRunMap binding written
 # by the governed launch path (api_routes → RunLauncher admission) is the
 # only source. ``prepare_context`` strips the client-carried copy, then
-# re-stamps the authenticated binding so ``model_policy._identity``
-# attributes budget to the workrun. Store is real SQLite in-memory — the
-# same session-factory shape as ``ExtensionRuntimeDeps.session_factory``.
+# re-stamps the authenticated binding — the same row budget admission
+# resolves governed identity from via ``_bound_workrun_id``. Store is real
+# SQLite in-memory — the same session-factory shape as
+# ``ExtensionRuntimeDeps.session_factory``.
 # --------------------------------------------------------------------------
 
 
@@ -893,6 +894,13 @@ async def execution_run_store() -> Any:
 
 def _stored_policy(store: Any, tenant: str | None = "s-tenant", **cfg: Any) -> EgressPolicy:
     return _policy(tenant_id_getter=lambda: tenant, store_getter=lambda: store, **cfg)
+
+
+async def _budget_identity(store: Any, context: Any) -> tuple[str, bool]:
+    """The identity BudgetAdmissionMiddleware resolves: ExecutionRunMap
+    workrun or server-owned run_id (mirrors model_policy._resolve_identity)."""
+    workrun = await _bound_workrun_id(store, context)
+    return (workrun, True) if workrun else (_general_run_id(context), False)
 
 
 async def _bind_governed(
@@ -923,12 +931,12 @@ class TestGovernedIdentityStamp:
     async def test_governed_workrun_stamped_from_server_binding(self, execution_run_store: Any) -> None:
         """The api_routes launch injection survives: prepare_context re-stamps
         kernel.workrun_id from the map row after the forged-key strip, and
-        _identity resolves the governed workrun for budget attribution."""
+        budget resolves the same governed workrun for attribution."""
         await _bind_governed(execution_run_store)
         pol = _stored_policy(execution_run_store)
         out = await pol.prepare_context({"thread_id": "t-gov", "run_id": "r-1"})
         assert out["kernel"] == {"workrun_id": "wr-1"}
-        assert _identity(out) == ("wr-1", True)
+        assert await _budget_identity(execution_run_store, out) == ("wr-1", True)
 
     @pytest.mark.asyncio
     async def test_server_binding_overrides_forged_kernel(self, execution_run_store: Any) -> None:
@@ -938,7 +946,7 @@ class TestGovernedIdentityStamp:
         pol = _stored_policy(execution_run_store)
         out = await pol.prepare_context({"thread_id": "t-gov", "run_id": "r-1", "kernel": {"workrun_id": "wr-forged"}})
         assert out["kernel"]["workrun_id"] == "wr-1"
-        assert _identity(out) == ("wr-1", True)
+        assert await _budget_identity(execution_run_store, out) == ("wr-1", True)
 
     @pytest.mark.asyncio
     async def test_forged_kernel_without_binding_stays_general(self, execution_run_store: Any) -> None:
@@ -947,7 +955,7 @@ class TestGovernedIdentityStamp:
         pol = _stored_policy(execution_run_store)
         out = await pol.prepare_context({"thread_id": "t-plain", "run_id": "r-x", "kernel": {"workrun_id": "wr-stolen"}})
         assert "kernel" not in out
-        assert _identity(out) == ("r-x", False)
+        assert await _budget_identity(execution_run_store, out) == ("r-x", False)
 
     @pytest.mark.asyncio
     async def test_cross_thread_workrun_cannot_be_stolen(self, execution_run_store: Any) -> None:
@@ -957,7 +965,7 @@ class TestGovernedIdentityStamp:
         pol = _stored_policy(execution_run_store)
         out = await pol.prepare_context({"thread_id": "t-gov", "run_id": "r-1", "kernel": {"workrun_id": "wr-other"}})
         assert "kernel" not in out
-        assert _identity(out) == ("r-1", False)
+        assert await _budget_identity(execution_run_store, out) == ("r-1", False)
 
     @pytest.mark.asyncio
     async def test_invoke_row_never_tags_run_governed(self, execution_run_store: Any) -> None:
@@ -968,7 +976,7 @@ class TestGovernedIdentityStamp:
         pol = _stored_policy(execution_run_store)
         out = await pol.prepare_context({"thread_id": "t-gov", "run_id": "r-1"})
         assert "kernel" not in out
-        assert _identity(out) == ("r-1", False)
+        assert await _budget_identity(execution_run_store, out) == ("r-1", False)
 
     @pytest.mark.asyncio
     async def test_followup_run_on_governed_thread_inherits_workrun(self, execution_run_store: Any) -> None:
@@ -978,7 +986,7 @@ class TestGovernedIdentityStamp:
         pol = _stored_policy(execution_run_store)
         out = await pol.prepare_context({"thread_id": "t-gov", "run_id": "r-2"})
         assert out["kernel"]["workrun_id"] == "wr-1"
-        assert _identity(out) == ("wr-1", True)
+        assert await _budget_identity(execution_run_store, out) == ("wr-1", True)
 
     @pytest.mark.asyncio
     async def test_store_absent_leaves_forged_kernel_dropped(self) -> None:
@@ -987,13 +995,13 @@ class TestGovernedIdentityStamp:
         pol = _stored_policy(None)
         out = await pol.prepare_context({"thread_id": "t-1", "run_id": "r-1", "kernel": {"workrun_id": "wr-x"}})
         assert "kernel" not in out
-        assert _identity(out) == ("r-1", False)
+        assert await _budget_identity(None, out) == ("r-1", False)
 
     @pytest.mark.asyncio
     async def test_before_agent_stamps_governed_identity_into_runtime_context(self, execution_run_store: Any) -> None:
         """End-to-end through the middleware: the forged kernel in the live
         runtime context is replaced by the authenticated workrun, and
-        _identity resolves governed on the same dict tools read."""
+        budget resolves governed on the same dict tools read."""
         await _bind_governed(execution_run_store)
         pol = _stored_policy(
             execution_run_store,
@@ -1010,7 +1018,7 @@ class TestGovernedIdentityStamp:
         )
         await mw.abefore_agent({}, runtime)
         assert runtime.context["kernel"] == {"workrun_id": "wr-1"}
-        assert _identity(runtime.context) == ("wr-1", True)
+        assert await _budget_identity(execution_run_store, runtime.context) == ("wr-1", True)
 
 
 class TestApprovedCloudForgeBoundary:

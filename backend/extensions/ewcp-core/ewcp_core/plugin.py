@@ -178,6 +178,11 @@ class EwcpCoreService:
             self._model_policy,
             policy,
             retry=self._transient_retry,
+            # Same authenticated sources the egress stamp pass uses — the
+            # admit resolves tenant/workrun from server state so forged
+            # context keys are dead input regardless of middleware ordering.
+            tenant_id_getter=lambda: self.ewcp_tenant_id,
+            store_getter=lambda: self._store,
         )
         return (MiddlewarePlacement(middleware, Placement.MODEL_PHYSICAL, AgentScope.BOTH, intercepting=True),)
 
