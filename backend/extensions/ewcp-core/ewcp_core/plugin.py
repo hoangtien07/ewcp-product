@@ -36,6 +36,7 @@ from .kernel_client import KernelClient, KernelClientConfig, KernelNotConfigured
 from .model_policy import BudgetAdmissionMiddleware, KernelBudgetClient, ModelPolicyConfig, TransientRetryPolicy
 from .recovery import RecoveryDenied, ResumeNotPending, RunNotOwned, RunRecovery
 from .run_launcher import DEFAULT_RUN_RECURSION_LIMIT, HttpRunStarter, RunLauncher, RunStarter, ThreadUploads
+from .tool_arg_feedback import ToolArgFeedbackMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,13 @@ class EwcpCoreService:
             tenant_id_getter=lambda: self.ewcp_tenant_id,
             store_getter=lambda: self._store,
         )
-        return (MiddlewarePlacement(middleware, Placement.MODEL_PHYSICAL, AgentScope.BOTH, intercepting=True),)
+        return (
+            MiddlewarePlacement(middleware, Placement.MODEL_PHYSICAL, AgentScope.BOTH, intercepting=True),
+            # N03: surface model-emitted args that the tool schema drops
+            # (silent-fail class in TOOL_FAILURE_TAXONOMY.md). Observational:
+            # non-intercepting, never rewrites args or blocks a call.
+            MiddlewarePlacement(ToolArgFeedbackMiddleware(), Placement.TOOL_VISIBLE, AgentScope.BOTH, intercepting=False),
+        )
 
     def status(self) -> dict[str, Any]:
         return {

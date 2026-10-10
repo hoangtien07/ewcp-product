@@ -24,9 +24,6 @@ import types
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langgraph.prebuilt.tool_node import ToolCallRequest
-
 from deerflow.agents.middlewares.loop_detection_middleware import LoopDetectionMiddleware
 from deerflow.agents.middlewares.terminal_response_middleware import TerminalResponseMiddleware
 from deerflow.agents.middlewares.tool_arg_alias_middleware import normalize_tool_call_args
@@ -35,6 +32,8 @@ from deerflow.community.aio_sandbox.aio_sandbox import _aio_file_error_from_body
 from deerflow.sandbox import tools as sandbox_tools
 from deerflow.sandbox.tools import read_file_tool
 from deerflow.tools.builtins.present_file_tool import present_file_tool
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.prebuilt.tool_node import ToolCallRequest
 
 
 def _runtime(**context: Any) -> types.SimpleNamespace:
@@ -119,9 +118,7 @@ def test_non_schema_args_are_silently_dropped_by_validation() -> None:
     model-visible schema accepts it without error and drops it — no
     signal reaches the model. This pins the silent class; the companion
     test file pins the new feedback note."""
-    validated = read_file_tool.tool_call_schema.model_validate(
-        {"path": "/mnt/user-data/uploads/inventory.xlsx", "toolbench_rapidapi_key": None}
-    )
+    validated = read_file_tool.tool_call_schema.model_validate({"path": "/mnt/user-data/uploads/inventory.xlsx", "toolbench_rapidapi_key": None})
     assert "toolbench_rapidapi_key" not in validated.model_dump()
 
 
