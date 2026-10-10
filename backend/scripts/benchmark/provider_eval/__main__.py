@@ -100,6 +100,9 @@ def run_task(model, task: dict[str, Any], max_turns: int = MAX_TOOL_TURNS) -> di
     tool_calls_total = 0
     tool_calls_ok = 0
     in_tokens = out_tokens = 0
+    # A provider that never reports usage must surface "unmeasured", not a
+    # fabricated 0 — track observation per field, never the accumulated sum.
+    in_seen = out_seen = False
     latencies: list[int] = []
     failure_cause: str | None = None
     first_pass_correct = False
@@ -117,8 +120,12 @@ def run_task(model, task: dict[str, Any], max_turns: int = MAX_TOOL_TURNS) -> di
         latencies.append(latency_ms)
         inference_calls += 1
         usage = response.usage_metadata or {}
-        in_tokens += int(usage.get("input_tokens") or 0)
-        out_tokens += int(usage.get("output_tokens") or 0)
+        if usage.get("input_tokens") is not None:
+            in_seen = True
+            in_tokens += int(usage["input_tokens"])
+        if usage.get("output_tokens") is not None:
+            out_seen = True
+            out_tokens += int(usage["output_tokens"])
         messages.append(response)
 
         final_text = str(response.content or "")
@@ -154,8 +161,8 @@ def run_task(model, task: dict[str, Any], max_turns: int = MAX_TOOL_TURNS) -> di
         "tool_calls": tool_calls_total,
         "tool_call_success": tool_calls_ok,
         "inference_calls": inference_calls,
-        "input_tokens": in_tokens,
-        "output_tokens": out_tokens,
+        "input_tokens": in_tokens if in_seen else None,
+        "output_tokens": out_tokens if out_seen else None,
         "latency_ms": sum(latencies),
         "latency_per_call_ms": latencies,
         "failure_cause": failure_cause,
@@ -164,6 +171,12 @@ def run_task(model, task: dict[str, Any], max_turns: int = MAX_TOOL_TURNS) -> di
 
 def summarize(results: list[dict[str, Any]], wall_ms: int, parallel: int) -> dict[str, Any]:
     n = len(results) or 1
+    # Token totals aggregate only tasks whose provider reported usage —
+    # null (with a coverage marker) when unmeasured, never a silent 0.
+    in_measured = [r for r in results if r.get("input_tokens") is not None]
+    out_measured = [r for r in results if r.get("output_tokens") is not None]
+    fully_measured = bool(results) and len(in_measured) == len(results) and len(out_measured) == len(results)
+    coverage = "measured" if fully_measured else ("partial" if (in_measured or out_measured) else "unmeasured")
     return {
         "tasks": len(results),
         "parallel_workers": parallel,
@@ -174,8 +187,9 @@ def summarize(results: list[dict[str, Any]], wall_ms: int, parallel: int) -> dic
         "first_pass_correct_rate": sum(r["first_pass_correct"] for r in results) / n,
         "tool_call_success_rate": (sum(r["tool_call_success"] for r in results) / max(1, sum(r["tool_calls"] for r in results))),
         "total_inference_calls": sum(r["inference_calls"] for r in results),
-        "total_input_tokens": sum(r["input_tokens"] for r in results),
-        "total_output_tokens": sum(r["output_tokens"] for r in results),
+        "total_input_tokens": sum(r["input_tokens"] for r in in_measured) if in_measured else None,
+        "total_output_tokens": sum(r["output_tokens"] for r in out_measured) if out_measured else None,
+        "token_usage_coverage": coverage,
         "total_latency_ms": sum(r["latency_ms"] for r in results),
         "failures": {r["id"]: r["failure_cause"] for r in results if r["failure_cause"]},
         "estimated_cost": None,
