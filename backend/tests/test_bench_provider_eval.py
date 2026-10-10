@@ -94,15 +94,7 @@ class TestArms:
 
 class TestTaskFile:
     def test_tasks_json_valid(self):
-        tasks = json.loads(
-            (
-                Path(__file__).parent.parent
-                / "scripts"
-                / "benchmark"
-                / "provider_eval"
-                / "tasks.json"
-            ).read_text()
-        )
+        tasks = json.loads((Path(__file__).parent.parent / "scripts" / "benchmark" / "provider_eval" / "tasks.json").read_text())
         assert len(tasks) >= 5
         for t in tasks:
             assert set(t) >= {"id", "prompt", "expect_regex", "use_tool"}

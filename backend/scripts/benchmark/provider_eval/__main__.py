@@ -79,12 +79,7 @@ def build_model(arm: str, model_id: str | None):
         account_id = os.environ.get("CF_ACCOUNT_ID")
         token = os.environ.get("CF_API_TOKEN")
         if not account_id or not token:
-            raise SystemExit(
-                "workers_ai arm needs env CF_ACCOUNT_ID + CF_API_TOKEN "
-                "(scoped Workers AI token — create it per docs/vnext notes; "
-                "never commit it). Optional CF_MODEL overrides "
-                f"{CF_DEFAULT_MODEL}."
-            )
+            raise SystemExit(f"workers_ai arm needs env CF_ACCOUNT_ID + CF_API_TOKEN (scoped Workers AI token — create it per docs/vnext notes; never commit it). Optional CF_MODEL overrides {CF_DEFAULT_MODEL}.")
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
@@ -177,10 +172,7 @@ def summarize(results: list[dict[str, Any]], wall_ms: int, parallel: int) -> dic
         "completion_rate": sum(r["completed"] for r in results) / n,
         "correct_rate": sum(r["correct"] for r in results) / n,
         "first_pass_correct_rate": sum(r["first_pass_correct"] for r in results) / n,
-        "tool_call_success_rate": (
-            sum(r["tool_call_success"] for r in results)
-            / max(1, sum(r["tool_calls"] for r in results))
-        ),
+        "tool_call_success_rate": (sum(r["tool_call_success"] for r in results) / max(1, sum(r["tool_calls"] for r in results))),
         "total_inference_calls": sum(r["inference_calls"] for r in results),
         "total_input_tokens": sum(r["input_tokens"] for r in results),
         "total_output_tokens": sum(r["output_tokens"] for r in results),
@@ -213,8 +205,7 @@ def cmd_smoke(args) -> int:
         "content": str(resp.content)[:200],
         "latency_ms": int((time.monotonic() - started) * 1000),
         "usage_metadata": resp.usage_metadata,
-        "provider": resp.response_metadata.get("model_provider")
-        or resp.response_metadata.get("provider"),
+        "provider": resp.response_metadata.get("model_provider") or resp.response_metadata.get("provider"),
     }
     print(json.dumps(out, indent=2))
     return 0
