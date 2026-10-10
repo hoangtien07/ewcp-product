@@ -152,9 +152,9 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 def cmd_smoke(args) -> int:
     """Single live inference request — the acceptance 'authorized inference' proof."""
-    model = build_model(args.arm, args.model, args.credentials_dir)
     started = time.monotonic()
     try:
+        model = build_model(args.arm, args.model, args.credentials_dir)
         resp = model.invoke([HumanMessage(content="Reply with exactly: ok")])
     except Exception as exc:
         print(json.dumps({"ok": False, "error": f"{exc.__class__.__name__}: {exc}", "code": getattr(exc, "code", None)}))

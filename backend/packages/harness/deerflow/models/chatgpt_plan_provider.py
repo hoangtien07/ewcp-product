@@ -155,9 +155,11 @@ class ChatGPTPlanTransientError(ChatGPTPlanProviderError):
 
 
 class ChatGPTPlanUsageLimitError(ChatGPTPlanProviderError):
-    """``subscription_sharing_usage_limit_exceeded`` — the account's plan limit
-    is exhausted. Non-retriable: the middleware maps ``usage_limit_exceeded``
-    to the non-retriable ``quota`` reason."""
+    """``subscription_sharing_usage_limit_exceeded`` — plan usage limit hit.
+    Documented recovery: pause plan-billed requests and link ChatGPT
+    settings → Usage; the error does not say the plan is empty or when it
+    resets (an app-specific limit can also apply). Non-retriable here: the
+    middleware maps ``usage_limit_exceeded`` to the ``quota`` reason."""
 
 
 class ChatGPTPlanUsageUnavailableError(ChatGPTPlanProviderError):

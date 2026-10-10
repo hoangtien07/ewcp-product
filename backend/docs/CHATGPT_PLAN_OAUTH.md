@@ -36,9 +36,12 @@ Other documented constraints:
 - `chatgpt.tokens.use.direct` is the inference grant. Sign-in can succeed
   without it; the provider then refuses to send requests and tells the user to
   re-consent.
-- ChatGPT **Plus** accounts share a 5-hour usage window across connected apps;
-  **Pro** is exempt from that window. `subscription_sharing_usage_limit_exceeded`
-  is non-retriable — pause and link the user to ChatGPT settings → Usage.
+- On `subscription_sharing_usage_limit_exceeded` (HTTP 429), the documented
+  recovery is: **pause** new plan-billed requests and link the user to
+  ChatGPT settings → Usage. Do not assume the plan is empty, do not infer a
+  reset time from the code alone — an app-specific limit can also apply.
+  (No per-tier reset window is documented for this flow; anything that names
+  one would be [unverified] and is deliberately not claimed here.)
 - Preview surface: no `temperature`/`top_p`/`max_output_tokens`/`metadata`/
   `previous_response_id`, no hosted tools (image gen, file search, Code
   Interpreter, computer use, hosted MCP/connectors). Function/custom tools
@@ -51,38 +54,120 @@ Other documented constraints:
 - `tests/test_chatgpt_plan_oauth.py`, `tests/test_chatgpt_plan_provider.py` — mocked suite
 - `scripts/benchmark/chatgpt_plan_eval/` — DeerFlow-level benchmark harness
 
-## Local authorization (founder runs this on his machine)
+## Local authorization runbook (founder runs this on his machine)
 
-1. Prerequisites: `backend/.venv` exists (`cd backend && uv sync` if not).
-   The browser dance runs on **your** machine — Devin/CI cannot and must not
-   do it; do not paste ChatGPT credentials anywhere.
-2. Start the flow:
-   ```bash
-   cd backend
-   .venv/bin/python -m deerflow.models.chatgpt_plan_oauth login
-   ```
-   This binds a `http://127.0.0.1:<port>/auth/callback` listener (default port
-   1455, ephemeral fallback), prints the authorize URL, and opens your browser.
-   `--no-browser` prints only. `--port`, `--timeout`, `--account` selectors exist.
-3. In the browser: sign in with ChatGPT and approve the consent screen. The
-   callback lands on `127.0.0.1`, the code is exchanged for tokens, the ID
-   token is verified against OpenAI's JWKS (signature, issuer, audience,
-   expiry, nonce), and the credential record is written atomically with `0600`
-   permissions to `<runtime_home>/chatgpt-plan/accounts/<client_id>.json`
-   (override: `CHATGPT_PLAN_CREDENTIALS_DIR`).
-4. If consent was granted **without** `chatgpt.tokens.use.direct`, the CLI warns
-   that plan usage is disabled — re-run `login --account <email>` (reauth reuses
-   the issued `client_id`) and check the consent screen's scope grant.
-5. Verify the grant + discover models:
-   ```bash
-   .venv/bin/python -m deerflow.models.chatgpt_plan_oauth accounts   # redacted view
-   .venv/bin/python -m deerflow.models.chatgpt_plan_oauth models     # requires scope
-   ```
-   Pick a `slug` from the catalog for `model:` in `config.yaml`.
-6. Minimal live inference proof (required before claiming integration works):
-   a small real `POST /v1/responses` call — a successful *model list alone is
-   not evidence*. The benchmark harness's `--smoke` mode does exactly this and
-   prints latency/usage so the account's live path is proven end-to-end.
+The browser dance runs on **your** machine — Devin/CI cannot and must not do
+it. Do not paste ChatGPT credentials anywhere. All commands run from
+`backend/`; `.venv` must exist (`cd backend && uv sync` if not).
+
+Each step is a live gate. Stop and fix at the first failing gate.
+
+**Gate 1 — consent grants the inference scope** (`chatgpt.tokens.use.direct`)
+
+```bash
+.venv/bin/python -m deerflow.models.chatgpt_plan_oauth login
+```
+
+Expected output:
+
+```
+Open this URL to sign in with ChatGPT:
+  https://auth.openai.com/api/accounts/authorize?response_type=code&...
+
+Signed in as <email>; client_id oaiapp_.... Credentials saved under <runtime_home>/chatgpt-plan.
+```
+
+The listener binds `http://127.0.0.1:<port>/auth/callback` (default 1455,
+ephemeral fallback) and opens the browser. `--no-browser` prints only.
+PASS = the "Signed in as" line (NOT the `BUT the grant lacks
+'chatgpt.tokens.use.direct'` variant — that means consent was declined for
+plan usage; re-run `login --account <email>` and approve the scope).
+Credential file: `<runtime_home>/chatgpt-plan/accounts/<client_id>.json`,
+`0600`, atomic write, ID token verified against OpenAI JWKS.
+
+**Gate 2 — model discovery on the real account**
+
+```bash
+.venv/bin/python -m deerflow.models.chatgpt_plan_oauth accounts   # redacted view (no tokens)
+.venv/bin/python -m deerflow.models.chatgpt_plan_oauth models
+```
+
+Expected: `accounts` prints a redacted record (email, client_id, scopes,
+has_* flags only). `models` prints the account's catalog:
+
+```
+gpt-5.2-codex                            GPT-5.2 Codex
+...
+```
+
+Pick a `slug` for `model:` in config.yaml. Reminder: a successful list is
+NOT proof of inference — gate 3 is.
+
+**Gate 3 — one streamed Responses request completes**
+
+```bash
+CHATGPT_PLAN_MODEL=<slug> \
+.venv/bin/python -m scripts.benchmark.chatgpt_plan_eval smoke --arm chatgpt_plan
+```
+
+Expected output (real `POST /v1/responses` through the provider):
+
+```json
+{
+  "ok": true,
+  "content": "ok",
+  "latency_ms": <int>,
+  "usage_metadata": {"input_tokens": <int>, "output_tokens": <int>, "total_tokens": <int>},
+  "billing_source": "chatgpt_plan",
+  "provider": "chatgpt_plan_oauth"
+}
+```
+
+PASS = `ok: true`. `ok: false` with `InferenceScopeMissingError` = gate 1
+failed; `ChatGPTPlanUsageLimitError`/`code: subscription_sharing_usage_limit_exceeded`
+= plan limit hit (documented recovery: pause + ChatGPT settings → Usage);
+`ChatGPTPlanNotEligibleError`/`user_not_eligible` = account not eligible —
+do NOT retry OAuth in a loop.
+
+**Gate 4 — one real function-calling turn**
+
+```bash
+.venv/bin/python -m scripts.benchmark.chatgpt_plan_eval run \
+    --arm chatgpt_plan --model <slug> \
+    --tasks scripts/benchmark/chatgpt_plan_eval/tasks.json \
+    --output-dir /tmp/chatgpt-plan-eval
+```
+
+Expected: `t2-arith-tool` and `t3-two-step-tool` complete with
+`tool_call_success == tool_calls` (the tool args parse and execute, the
+`function_call_output` round-trips). PASS = `correct_rate` ≈ 1.0 with
+`tool_call_success_rate == 1.0`. A `subscription_sharing_unsupported_capability`
+failure here means a hosted/tool type leaked into `tools` — bug, report it.
+
+**Gate 5 — usage + attribution recorded**
+
+`results.json` in the output dir: every result carries `inference_calls`,
+`input_tokens`, `output_tokens`, `latency_ms`, `failure_cause`; the model's
+response metadata carries `billing_source="chatgpt_plan"`,
+`provider="chatgpt_plan_oauth"`, `auth_mode="oauth_chatgpt_plan"`. These are
+measured tokens — NOT billed cost; any `pricing` block yields an
+API-equivalent estimate only.
+
+**Gate 6 — revoked/expired grant fails appropriately**
+
+```bash
+.venv/bin/python -m deerflow.models.chatgpt_plan_oauth logout --account <email>
+# → "Remote session revoked and local tokens cleared."
+CHATGPT_PLAN_MODEL=<slug> \
+.venv/bin/python -m scripts.benchmark.chatgpt_plan_eval smoke --arm chatgpt_plan
+```
+
+Expected after logout: `{"ok": false, "error": "CredentialNotFoundError: ..."}`
+(exit 1) — no silent fallback to another credential. Remote revocation
+(ChatGPT settings → disconnect app) surfaces as
+`subscription_sharing_invalid_user`/`ChatGPTPlanInvalidUserError` on the next
+call or an `invalid_grant`-family refresh error — re-run `login` to recover.
+Do NOT erase credentials on transient network failures.
 
 ## Self-hosted VM procedure (authorized path)
 
@@ -148,7 +233,9 @@ mapping (required for a clean re-sign-in).
 - **Live OAuth + inference are not yet proven** — the Authorization-Code+PKCE
   dance requires the founder's own browser sign-in. Everything else is
   implemented and covered by mocked tests.
-- Plus-plan 5h shared usage window; Pro exempt.
+- Plan-billed requests can hit `subscription_sharing_usage_limit_exceeded`
+  (pause + settings → Usage; no documented per-tier reset window for this
+  flow — any specific window named elsewhere is [unverified]).
 - Preview restrictions listed above (no hosted tools, no param knobs).
 - Remotely hosted / commercial EWCP is **blocked pending OpenAI approval**
   (interest form) — out of scope for this PoC.
