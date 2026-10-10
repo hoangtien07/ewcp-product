@@ -195,6 +195,130 @@ def test_human_accepted_never_inferred():
     assert row2["human_accepted"] is True
 
 
+def _minimal_passing_case(**overrides):
+    """A general-lane text-only case that grades task_passed=true — a clean
+    base for injecting malformed fields one at a time."""
+    case = {
+        "case_id": "c",
+        "lane": "general",
+        "provider": "p",
+        "run_status": "success",
+        "terminal": True,
+        "required_artifacts": [],
+        "produced_artifacts": [],
+        "contract": None,
+        "human_acceptance": None,
+        "expect": {"task_passed": True},
+    }
+    case.update(overrides)
+    return case
+
+
+@pytest.mark.parametrize(
+    "cost, want_est, want_act, want_cov",
+    [
+        ("12.5", None, None, "none"),  # truthy string — .get would raise
+        (7, None, None, "none"),  # truthy int
+        (4.2, None, None, "none"),  # truthy float
+        (True, None, None, "none"),  # truthy bool
+        (["actual_usd"], None, None, "none"),  # truthy list
+        ({"actual_usd": "lots"}, None, None, "none"),  # dict, non-numeric value
+        ({"estimated_usd": 0.5, "actual_usd": True}, 0.5, None, "estimated_only"),
+        ({"actual_usd": 0}, None, 0, "measured"),  # zero spend is still measured
+    ],
+)
+def test_malformed_cost_reports_honestly_not_crash(cost, want_est, want_act, want_cov):
+    """N08 finding: a truthy non-dict ``cost`` made ``.get`` raise — the
+    evaluator must instead report null/unmeasured and record the
+    malformation, while grading is unaffected."""
+    row = evaluate_case(_minimal_passing_case(cost=cost))
+    assert REQUIRED_RESULT_KEYS <= set(row)
+    assert row["task_passed"] is True
+    assert row["evaluator_assertions_passed"] is True
+    assert row["estimated_cost_usd"] == want_est
+    assert row["actual_spend_usd"] == want_act
+    assert row["cost_coverage"] == want_cov
+
+
+@pytest.mark.parametrize("cost", ["12.5", 7, True, ["actual_usd"], {"actual_usd": "lots"}])
+def test_malformed_cost_records_limitation(cost):
+    row = evaluate_case(_minimal_passing_case(cost=cost))
+    assert any("cost" in lim for lim in row["limitations"])
+
+
+def test_missing_cost_is_unmeasured_not_fabricated():
+    row = evaluate_case(_minimal_passing_case())
+    assert row["estimated_cost_usd"] is None
+    assert row["actual_spend_usd"] is None
+    assert row["cost_coverage"] == "none"
+    assert row["task_passed"] is True
+
+
+def test_malformed_cost_on_missing_keys_path_still_reports():
+    """The early-return malformed-case path reads cost too — it must not
+    crash there either."""
+    case = _minimal_passing_case(cost="oops")
+    del case["terminal"], case["expect"]
+    row = evaluate_case(case)
+    assert REQUIRED_RESULT_KEYS <= set(row)
+    assert row["task_passed"] is False
+    assert row["cost_coverage"] == "none"
+    assert any("missing keys" in lim for lim in row["limitations"])
+
+
+def test_weird_fields_declare_evidence_honestly():
+    """Non-dict structured fields are malformed trace data: never crash,
+    never fabricate — the row records what could not be read."""
+    # a present-but-unreadable contract cannot verify acceptance
+    row = evaluate_case(_minimal_passing_case(contract="sealed-pass"))
+    assert row["acceptance_verified"] is False
+    assert row["task_passed"] is False
+    assert any("contract" in lim for lim in row["limitations"])
+
+    # unreadable expect -> the evaluator cannot confirm its own oracle
+    row = evaluate_case(_minimal_passing_case(expect="yes"))
+    assert row["evaluator_assertions_passed"] is False
+    assert any("expect" in lim for lim in row["limitations"])
+
+    # non-object produced records cannot satisfy a requirement
+    row = evaluate_case(
+        _minimal_passing_case(
+            required_artifacts=[{"path": "o/x", "sha256": "a" * 64}],
+            produced_artifacts=["not-a-record"],
+        )
+    )
+    assert row["artifact_observed"] is False
+    assert row["task_passed"] is False
+
+    # an unreadable requirement means the postcondition is unverifiable
+    row = evaluate_case(_minimal_passing_case(required_artifacts=[{"path": "o/x"}, "junk"]))
+    assert row["artifact_observed"] is False
+    assert row["task_passed"] is False
+
+    # required_artifacts that is not a list at all
+    row = evaluate_case(_minimal_passing_case(required_artifacts="outputs/x.md"))
+    assert row["artifact_observed"] is False
+    assert any("required_artifacts" in lim for lim in row["limitations"])
+
+    # a malformed acceptance event stays unrecorded — never inferred
+    row = evaluate_case(_minimal_passing_case(human_acceptance="approved"))
+    assert row["human_accepted"] is None
+    assert any("human_acceptance" in lim for lim in row["limitations"])
+
+    # a bare-string limitation travels as one entry, not characters
+    row = evaluate_case(_minimal_passing_case(limitations="one note"))
+    assert "one note" in row["limitations"]
+
+
+def test_malformed_cost_fixture_row(fixture_results):
+    row = fixture_results["general_malformed_cost_block"]
+    assert row["cost_coverage"] == "none"
+    assert row["estimated_cost_usd"] is None
+    assert row["actual_spend_usd"] is None
+    assert row["task_passed"] is True
+    assert any("cost" in lim for lim in row["limitations"])
+
+
 def test_load_cases_skips_blank_and_comment_lines(tmp_path):
     p = tmp_path / "c.jsonl"
     p.write_text(
