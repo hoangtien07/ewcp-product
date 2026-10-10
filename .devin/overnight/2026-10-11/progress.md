@@ -10,3 +10,4 @@ Window: ~7h from 2026-10-10 ~19:00 UTC (≈08:30 ICT 2026-10-11). Lead: parent s
 ## Running
 - NEXT: N01 (spawn worker; N01+N02 coupled -> same Product branch if needed).
 - 19:20 UTC: spawned W1 (N01+N02, session 99f4a715) + W2 (N06+N07 audits, session d1467c86). Subscribed to settle notifications.
+- 19:35 UTC W2 done: N06=REVISE (3 measured reasons: product:boot needs GEMINI_API_KEY ambient → 10/11 vs 13/13; validator doesn't assert 2 new knobs — register-403 + sandbox isolated mode; README stale). N07=P0 HOLD: REAL generic-write bypass on G1′ — agent creds POST /api/resource/Purchase Order → 200 ungoverned (root cause: EWCP Write DocPerm create+write is what generic REST consumes; no doc_events guard). Deny-side holds (submit/delete/meta 403). Bridge positive verified. Report → kernel docs PR. Write experiments STOPPED.
