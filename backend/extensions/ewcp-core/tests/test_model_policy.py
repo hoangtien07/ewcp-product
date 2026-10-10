@@ -403,6 +403,49 @@ async def test_tenant_id_passes_through_to_admission() -> None:
     assert budget.admits[0]["tenant_id"] == "acme"
 
 
+@pytest.mark.asyncio
+async def test_tenant_id_falls_back_to_invoke_tenant() -> None:
+    """GP-01: the deployment declares `invoke.tenant_id` (capability lane)
+    but no `budget.tenant_id` — the admission must carry the same tenant
+    or the dev-mode kernel 422s and the ledger stays empty."""
+    config = ModelPolicyConfig.resolve({"invoke": {"tenant_id": "demo"}, "budget": {"cap_usd": "5.00"}})
+    assert config.tenant_id == "demo"
+    budget = _FakeBudgetClient()
+    spy = _SpyHandler(result=_used_response())
+
+    await _middleware(budget, config).awrap_model_call(_request(context=GENERAL_CTX), spy)
+
+    assert budget.admits[0]["tenant_id"] == "demo"
+
+
+@pytest.mark.asyncio
+async def test_budget_tenant_id_wins_over_invoke() -> None:
+    """An explicit `budget.tenant_id` is the admission tenant even when
+    `invoke.tenant_id` names a different tenant for capability calls."""
+    config = ModelPolicyConfig.resolve({"invoke": {"tenant_id": "invoke-t"}, "budget": {"cap_usd": "5.00", "tenant_id": "budget-t"}})
+    assert config.tenant_id == "budget-t"
+    budget = _FakeBudgetClient()
+    spy = _SpyHandler(result=_used_response())
+
+    await _middleware(budget, config).awrap_model_call(_request(context=GENERAL_CTX), spy)
+
+    assert budget.admits[0]["tenant_id"] == "budget-t"
+
+
+@pytest.mark.asyncio
+async def test_ewcp_tenant_id_context_stamp_wins() -> None:
+    """A run-scoped `ewcp_tenant_id` stamp (the same runtime-context key
+    the egress policy resolves) overrides the configured tenant."""
+    budget = _FakeBudgetClient()
+    spy = _SpyHandler(result=_used_response())
+    context = dict(GOVERNED_CTX)
+    context["ewcp_tenant_id"] = "tenant-ctx"
+
+    await _middleware(budget, _config(tenant_id="acme")).awrap_model_call(_request(context=context), spy)
+
+    assert budget.admits[0]["tenant_id"] == "tenant-ctx"
+
+
 # -- sync path -----------------------------------------------------------------
 
 

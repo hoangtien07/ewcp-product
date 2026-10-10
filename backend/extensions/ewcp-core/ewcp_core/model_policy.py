@@ -301,6 +301,15 @@ class ModelPolicyConfig:
     `general_on_policy_unavailable`: `local` (default) applies the host's
     declared token bounds; `allow` passes the call unadmitted; `deny`
     fails closed. Governed runs ignore this knob: they always deny.
+
+    `tenant_id` declares the tenant on a budget admission — the dev-mode
+    kernel (no API keys configured) requires it, and without it
+    `POST /budget/admissions` 422s and the admission lane degrades to
+    `local`, leaving the kernel ledger empty. `budget.tenant_id` wins,
+    falling back to `invoke.tenant_id` — the same operator tenant the
+    capability-invoke lane declares — so one tenant covers both lanes.
+    Keyed kernels ignore the declared tenant unless it mismatches the
+    key (403).
     """
 
     cap_usd: Decimal | None = None
@@ -318,9 +327,11 @@ class ModelPolicyConfig:
         if mode not in {"local", "allow", "deny"}:
             raise ValueError(f"general_on_policy_unavailable must be one of local|allow|deny, got {mode!r}")
         cap = budget.get("cap_usd")
+        invoke = (config or {}).get("invoke") or {}
+        invoke_tenant = invoke.get("tenant_id") if isinstance(invoke, Mapping) else None
         return cls(
             cap_usd=Decimal(str(cap)) if cap is not None else None,
-            tenant_id=str(budget["tenant_id"]) if budget.get("tenant_id") else None,
+            tenant_id=str(budget["tenant_id"]) if budget.get("tenant_id") else (str(invoke_tenant) if invoke_tenant else None),
             usd_per_1k_tokens=Decimal(str(budget.get("usd_per_1k_tokens", "0.004"))),
             max_output_tokens_per_call=int(budget.get("max_output_tokens_per_call", 4096)),
             general_on_policy_unavailable=mode,
@@ -337,6 +348,16 @@ def _identity(context: Mapping[str, Any]) -> tuple[str, bool]:
         return str(workrun_id), True
     run_id = context.get("run_id") or context.get("thread_id") or "unknown"
     return str(run_id), False
+
+
+def _tenant_id(context: Mapping[str, Any], config: ModelPolicyConfig) -> str | None:
+    """Tenant to declare on an admission: a run-scoped `ewcp_tenant_id`
+    context stamp (the same key the egress policy resolves from
+    runtime context) wins over the configured tenant."""
+    stamped = context.get("ewcp_tenant_id")
+    if stamped:
+        return str(stamped)
+    return config.tenant_id
 
 
 def _est_input_tokens(messages: object) -> int:
@@ -452,7 +473,7 @@ class BudgetAdmissionMiddleware(AgentMiddleware):
         if self._config.cap_usd is not None:
             try:
                 admission = await self._budget.admit(
-                    tenant_id=self._config.tenant_id,
+                    tenant_id=_tenant_id(context, self._config),
                     execution_run_id=run_id,
                     cap_usd=self._config.cap_usd,
                     reserve_usd=reserve_usd,
