@@ -15,8 +15,10 @@ touch is recorded below. Budget: **≤ 8 files**.
 | 2 | `docker/nginx/nginx.conf` | Dedicated `location /api/ewcp` with 660s connect/send/read timeouts | Governed-intake POSTs block for the whole first attempt (600s kernel turn cap); the generic `/api/` catch-all's default 60s read timeout 504s mid-run — false error while the run completes | 2026-10-06 |
 | 3 | `docker/nginx/nginx.local.conf` | Same `/api/ewcp` 660s block for the local-compose proxy | Same defect on the local docker path | 2026-10-06 |
 | 4 | `frontend/next.config.js` | `experimental.proxyTimeout = 660_000` | Next dev proxy dropped the upstream socket (~60s) on a 73s governed intake → false "Internal Server Error"; raises the rewrite proxy ceiling to cap + buffer | 2026-10-06 |
+| 5 | `backend/packages/harness/deerflow/agents/middlewares/llm_error_handling_middleware.py` | Added `"usage_limit"` to `_QUOTA_PATTERNS` | Sign-in-with-ChatGPT `subscription_sharing_usage_limit_exceeded` is documented non-retriable (pause, not retry); without the pattern the 429 classified as transient and burned retries | 2026-10-09 |
+| 6 | `config.example.yaml` | Commented `chatgpt_plan_oauth` model block (`ChatGPTPlanChatModel` `use:` path + authorize-on-host note) | Deliverable requires a documented provider config; class-path `use:` needs no registry entry | 2026-10-09 |
 
-Current count: **4 / 8**.
+Current count: **6 / 8**.
 
 ## Merge-sync policy
 

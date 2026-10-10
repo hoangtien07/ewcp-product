@@ -279,6 +279,26 @@ models:
   #   context_window: 400000
   #   supports_vision: true
 
+  # Example: ChatGPT plan usage via Sign in with ChatGPT OAuth (no OpenAI API key)
+  # Bills inference against the signed-in account's ChatGPT plan, not the API
+  # platform. Authorize once on THIS host before enabling:
+  #   cd backend && .venv/bin/python -m deerflow.models.chatgpt_plan_oauth login
+  # Requires the chatgpt.tokens.use.direct scope; OAuth is local-app eligible
+  # only (see backend/docs/CHATGPT_PLAN_OAUTH.md for the eligibility matrix and
+  # the self-hosted VM transfer procedure). Never exposes tokens to the agent.
+  # - name: chatgpt-plan
+  #   display_name: ChatGPT Plan (OAuth)
+  #   description: "Billed against the signed-in ChatGPT plan — not an OpenAI API key"
+  #   use: deerflow.models.chatgpt_plan_provider:ChatGPTPlanChatModel
+  #   model: <slug from `python -m deerflow.models.chatgpt_plan_oauth models`>
+  #   # account: user@example.com     # required once >1 account is authorized
+  #   # reasoning_effort: medium      # optional; only sent when set
+  #   supports_reasoning_effort: true
+  #   supports_thinking: true
+  #   context_window: 400000
+  #   # billing_source = "chatgpt_plan" is stamped on every response; token
+  #   # counts are measured usage, not a billed amount (plan limits apply).
+
   # Example: Ollama (native provider — preserves thinking/reasoning content)
   #
   # IMPORTANT: Use langchain_ollama:ChatOllama instead of langchain_openai:ChatOpenAI

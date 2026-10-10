@@ -49,6 +49,10 @@ _QUOTA_PATTERNS = (
     "billing",
     "credit",
     "payment",
+    # Subscription-plan usage limits (e.g. Sign-in-with-ChatGPT
+    # ``subscription_sharing_usage_limit_exceeded``) are account-capacity
+    # exhaustion: pausing, not retrying, is the documented recovery.
+    "usage_limit",
     "余额不足",
     "超出限额",
     "额度不足",
