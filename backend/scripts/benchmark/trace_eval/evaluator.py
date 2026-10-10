@@ -110,10 +110,31 @@ def load_cases(path: Path | str) -> list[dict[str, Any]]:
     return cases
 
 
-def _artifact_observed(required: list[dict[str, Any]], produced: list[dict[str, Any]]) -> bool:
+def _malformed_note(field: str, limitations: list[str], detail: str) -> None:
+    limitations.append(f"malformed {field}: {detail}")
+
+
+def _artifact_observed(required: Any, produced: Any, limitations: list[str]) -> bool:
     """Every required artifact must be produced at the same path, non-empty,
-    and digest-equal when the requirement declares one."""
-    by_path = {p.get("path"): p for p in produced}
+    and digest-equal when the requirement declares one. Non-list or non-dict
+    records are malformed trace data — they are reported, never invented."""
+    if required is None:
+        required = []
+    if produced is None:
+        produced = []
+    if not isinstance(required, list):
+        _malformed_note("required_artifacts", limitations, "expected a list — requirements unreadable")
+        return False
+    if not isinstance(produced, list):
+        _malformed_note("produced_artifacts", limitations, "expected a list — no valid produced records")
+        produced = []
+    if any(not isinstance(req, dict) for req in required):
+        _malformed_note("required_artifacts", limitations, "non-object requirement(s) — cannot verify")
+        return False
+    valid_produced = [p for p in produced if isinstance(p, dict)]
+    if len(valid_produced) != len(produced):
+        _malformed_note("produced_artifacts", limitations, "non-object entries ignored")
+    by_path = {p.get("path"): p for p in valid_produced}
     for req in required:
         prod = by_path.get(req.get("path"))
         if prod is None:
@@ -126,33 +147,72 @@ def _artifact_observed(required: list[dict[str, Any]], produced: list[dict[str, 
     return True
 
 
-def _acceptance_verified(case: dict[str, Any], artifact_observed: bool) -> bool:
+def _acceptance_verified(case: dict[str, Any], artifact_observed: bool, limitations: list[str]) -> bool:
     """Contract-bound lanes trust the recorded kernel verdict + seal; the
     general lane has no contract — its artifact postcondition is the only
-    acceptance signal that exists."""
+    acceptance signal that exists. A contract that is present but not an
+    object cannot carry a verdict — acceptance stays unverified."""
     contract = case.get("contract")
     if contract is None:
         return artifact_observed
+    if not isinstance(contract, dict):
+        _malformed_note("contract", limitations, "expected object — verdict unreadable, acceptance unverified")
+        return False
     return contract.get("verdict") == "pass" and contract.get("sealed") is True
 
 
-def _cost_coverage(cost: dict[str, Any] | None) -> str:
+def _cost_amount(cost: dict[str, Any], key: str, limitations: list[str]) -> float | int | None:
+    """A recorded spend value is honest only as a number; anything else
+    (string, bool, nested) reports as unrecorded with the malformation
+    noted — the evaluator never fabricates a figure."""
+    value = cost.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        _malformed_note("cost", limitations, f"{key} is not a number — reported as null")
+        return None
+    return value
+
+
+def _cost_fields(cost: Any, limitations: list[str]) -> tuple[Any, Any, str]:
+    """Project the trace's cost block into (estimated, actual, coverage).
+    A missing or non-object cost block reads as unmeasured, with the
+    malformation recorded — never as a fabricated zero."""
+    if cost is None:
+        return None, None, "none"
     if not isinstance(cost, dict):
-        return "none"
-    if cost.get("actual_usd") is not None:
-        return "measured"
-    if cost.get("estimated_usd") is not None:
-        return "estimated_only"
-    return "none"
+        _malformed_note("cost", limitations, f"expected object, got {type(cost).__name__} — reported unmeasured")
+        return None, None, "none"
+    estimated = _cost_amount(cost, "estimated_usd", limitations)
+    actual = _cost_amount(cost, "actual_usd", limitations)
+    if actual is not None:
+        coverage = "measured"
+    elif estimated is not None:
+        coverage = "estimated_only"
+    else:
+        coverage = "none"
+    return estimated, actual, coverage
+
+
+def _case_limitations(case: dict[str, Any]) -> list[str]:
+    raw = case.get("limitations")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        return list(raw)
+    return [f"malformed limitations: expected list of strings, got {type(raw).__name__}"]
 
 
 def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
     missing_keys = REQUIRED_CASE_KEYS - set(case)
-    limitations = list(case.get("limitations") or [])
+    limitations = _case_limitations(case)
     if EVALUATOR_LIMITATION not in limitations:
         limitations.append(EVALUATOR_LIMITATION)
     if missing_keys:
         limitations.append(f"malformed case: missing keys {sorted(missing_keys)}")
+        estimated, actual, coverage = _cost_fields(case.get("cost"), limitations)
         return {
             "case_id": case.get("case_id", f"line:{case.get('_lineno', '?')}"),
             "base_sha": case.get("base_sha"),
@@ -168,27 +228,38 @@ def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
             "task_passed": False,
             "evaluator_assertions_passed": False,
             "llm_calls": case.get("llm_calls"),
-            "estimated_cost_usd": (case.get("cost") or {}).get("estimated_usd"),
-            "actual_spend_usd": (case.get("cost") or {}).get("actual_usd"),
-            "cost_coverage": _cost_coverage(case.get("cost")),
+            "estimated_cost_usd": estimated,
+            "actual_spend_usd": actual,
+            "cost_coverage": coverage,
             "limitations": limitations,
         }
 
     task_finished = bool(case.get("terminal"))
     artifact_observed = _artifact_observed(
-        case.get("required_artifacts") or [],
-        case.get("produced_artifacts") or [],
+        case.get("required_artifacts"),
+        case.get("produced_artifacts"),
+        limitations,
     )
-    acceptance_verified = _acceptance_verified(case, artifact_observed)
+    acceptance_verified = _acceptance_verified(case, artifact_observed, limitations)
 
     event = case.get("human_acceptance")
-    human_accepted = None if not isinstance(event, dict) else event.get("approved")
+    if event is None:
+        human_accepted = None
+    elif isinstance(event, dict):
+        human_accepted = event.get("approved")
+    else:
+        human_accepted = None
+        _malformed_note("human_acceptance", limitations, "expected object — treated as unrecorded")
 
     task_passed = bool(task_finished and artifact_observed and acceptance_verified)
-    expected = (case.get("expect") or {}).get("task_passed")
+    expect = case.get("expect")
+    if expect is not None and not isinstance(expect, dict):
+        _malformed_note("expect", limitations, "expected object — evaluator oracle unreadable")
+        expect = None
+    expected = (expect or {}).get("task_passed")
     evaluator_assertions_passed = expected is not None and task_passed == expected
 
-    cost = case.get("cost") or {}
+    estimated, actual, coverage = _cost_fields(case.get("cost"), limitations)
     return {
         "case_id": case["case_id"],
         "base_sha": case.get("base_sha"),
@@ -204,9 +275,9 @@ def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
         "task_passed": task_passed,
         "evaluator_assertions_passed": evaluator_assertions_passed,
         "llm_calls": case.get("llm_calls"),
-        "estimated_cost_usd": cost.get("estimated_usd"),
-        "actual_spend_usd": cost.get("actual_usd"),
-        "cost_coverage": _cost_coverage(cost),
+        "estimated_cost_usd": estimated,
+        "actual_spend_usd": actual,
+        "cost_coverage": coverage,
         "limitations": limitations,
     }
 
