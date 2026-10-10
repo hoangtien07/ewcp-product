@@ -162,3 +162,41 @@ Total: 11 new assertions across 3 files, all green post-fix
 
 - `0b68db3f` — test: N04 honesty pins (red test first, per protocol).
 - `69511eac` — fix: stream-loss marker in `ExecutionRunThread`.
+
+## Council review addendum (W9)
+
+Independent regression check of the `streamLost` marker against DeerFlow
+execution/UX semantics. Verdict: **one real defect found and fixed on this
+branch**; the core mechanism cannot suppress a real terminal display.
+
+Verified mechanically (`frontend/src/ewcp/components/execution-run-thread.tsx`):
+
+- **Cannot suppress a terminal state.** The banner is an additive `<p>` block
+  — the lifecycle badge, decision cards and error card still render. The mark
+  guard (`!sawTerminalRef.current && !ctl.signal.aborted &&
+  LIVE_STATUSES.has(r.status)`) means a refresh that lands on a terminal
+  record never sets the flag; a clean `end`/`error` frame sets
+  `sawTerminalRef` and blocks the mark; the cleanup abort blocks it too.
+- **No state leak across runs — FIXED.** `ExecutionRunThread` is mounted once
+  in `ewcp-runs-page.tsx` (no `key`), so an `executionRunId` switch re-uses
+  the same instance. The `streamLost`/`sawTerminalRef` reset sat *after* the
+  live-guard early return, so switching to a non-live run kept the previous
+  run's banner. Red test `a stream-lost marker does not leak onto the next
+  run's detail` pinned the leak; the fix moves the reset above the guard
+  (`2ab1a830`).
+- **Stream-drop detection is shape-agnostic.** Marking lives in `.finally`,
+  so a dropped stream is caught whether `joinRunStream` rejects or resolves
+  on bare EOF.
+
+Pre-existing adjacent issues (on `product/vnext` already, not introduced
+here — noted, not fixed):
+
+- `streamEvents` (the activity feed) is never cleared on a run switch, so a
+  stale feed can render under a different run — same leak class, predates N04.
+- The stream-finally `getExecutionRun(executionRunId, {refresh:true})` can
+  resolve after a run switch and `setRun` the *old* record over the new view
+  — the pattern predates N04; the new marker inherits the same closure but
+  does not add a new path.
+
+Tests: 11 N04 assertions stay green + 1 new leak pin (red→green on this
+branch); prettier clean; `pnpm check` clean.
