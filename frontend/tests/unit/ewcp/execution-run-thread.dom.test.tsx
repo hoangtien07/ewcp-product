@@ -55,6 +55,7 @@ function stubAll(
   run: typeof RUN = RUN,
   workrun: typeof WORKRUN = WORKRUN,
   joinBody = "event: end\ndata: null\n\n",
+  extraRuns: Record<string, typeof RUN> = {},
 ) {
   const calls: { url: string; body?: unknown }[] = [];
   rs.stubGlobal(
@@ -80,7 +81,10 @@ function stubAll(
         body = run;
       } else if (u === "/api/ewcp/runs/er-1?refresh=1") {
         body = { run };
-      } else if (u === "/api/ewcp/runs/er-1/workrun") {
+      } else if (/^\/api\/ewcp\/runs\/[^/?]+$/.test(u)) {
+        const other = extraRuns[u.slice("/api/ewcp/runs/".length)];
+        if (other) body = { run: other };
+      } else if (/^\/api\/ewcp\/runs\/[^/?]+\/workrun$/.test(u)) {
         body = { workrun };
       } else if (u === "/api/threads/t-1/runs/r-1/join") {
         return Promise.resolve(
@@ -234,6 +238,36 @@ describe("ExecutionRunThread", () => {
     );
     // the last-known record still renders — the marker annotates, not hides
     expect(screen.getByText("Đã tiếp nhận")).toBeTruthy();
+  });
+
+  // Council rework (W9): the pane is mounted once and `executionRunId`
+  // switches re-use the same instance (no `key`) — a `streamLost` marker set
+  // on run A must not survive onto run B's detail.
+  test("a stream-lost marker does not leak onto the next run's detail", async () => {
+    stubAll(
+      true,
+      { ...RUN, status: "running" },
+      { ...WORKRUN, status: "running", pending_questions: [] },
+      "event: values\ndata: {}\n\n",
+      {
+        "er-2": {
+          ...RUN,
+          execution_run_id: "er-2",
+          run_id: "r-2",
+          status: "completed",
+          join_url: "/api/threads/t-1/runs/r-2/join",
+        },
+      },
+    );
+    const { rerender } = render(
+      <ExecutionRunThread executionRunId="er-1" />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Mất kết nối trực tiếp/)).toBeTruthy(),
+    );
+    rerender(<ExecutionRunThread executionRunId="er-2" />);
+    await waitFor(() => expect(screen.getByText("Đã tiếp nhận")).toBeTruthy());
+    expect(screen.queryByText(/Mất kết nối trực tiếp/)).toBeNull();
   });
 
   test("a clean `end` frame does not claim a dropped stream", async () => {
