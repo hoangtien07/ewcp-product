@@ -162,6 +162,14 @@ describe("ewcp labels — kernel enum → Vietnamese", () => {
     expect(formatCounts({})).toBe("");
   });
 
+  test("formatCounts drops unmeasured counts instead of fabricating zeros (N08)", () => {
+    // a kernel count key absent/undefined means "not measured" — the pane
+    // omits the entry rather than rendering a fabricated "0 <unit>"; a
+    // real measured 0 still renders as 0
+    expect(formatCounts({ pos: undefined, docs: 0 })).toBe("0 chứng từ");
+    expect(formatCounts({ pos: undefined, n_pos: undefined })).toBe("");
+  });
+
   test("unknown values fall through untouched (kernel VN options pass through)", () => {
     // kernel ask-back options already arrive as Vietnamese prose — the map
     // must not mangle them
