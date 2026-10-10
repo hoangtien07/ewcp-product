@@ -259,15 +259,16 @@ describe("ExecutionRunThread", () => {
         },
       },
     );
-    const { rerender } = render(
-      <ExecutionRunThread executionRunId="er-1" />,
-    );
+    const { rerender } = render(<ExecutionRunThread executionRunId="er-1" />);
     await waitFor(() =>
       expect(screen.getByText(/Mất kết nối trực tiếp/)).toBeTruthy(),
     );
     rerender(<ExecutionRunThread executionRunId="er-2" />);
-    await waitFor(() => expect(screen.getByText("Đã tiếp nhận")).toBeTruthy());
-    expect(screen.queryByText(/Mất kết nối trực tiếp/)).toBeNull();
+    // er-2 loads async; the marker must clear once its record lands
+    await waitFor(() =>
+      expect(screen.queryByText(/Mất kết nối trực tiếp/)).toBeNull(),
+    );
+    expect(screen.getByText("Đã tiếp nhận")).toBeTruthy();
   });
 
   test("a clean `end` frame does not claim a dropped stream", async () => {

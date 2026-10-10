@@ -119,11 +119,14 @@ export function ExecutionRunThread({
   // SSE join while the run is live — stream end (or abort) refreshes the
   // record + governed view once, no polling loop.
   useEffect(() => {
+    // reset on every join-identity change — also when the new run is not
+    // live, or a `streamLost` marker from the previous run would leak onto
+    // this run's detail (the pane is re-used, not remounted, on switch).
+    sawTerminalRef.current = false;
+    setStreamLost(false);
     if (!run?.join_url || !run.run_id || !LIVE_STATUSES.has(run.status)) return;
     const ctl = new AbortController();
     abortRef.current = ctl;
-    sawTerminalRef.current = false;
-    setStreamLost(false);
     setStreaming(true);
     joinRunStream(run.join_url, {
       signal: ctl.signal,
