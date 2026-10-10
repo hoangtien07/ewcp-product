@@ -18,3 +18,4 @@ Window: ~7h from 2026-10-10 ~19:00 UTC (≈08:30 ICT 2026-10-11). Lead: parent s
 - 21:00 UTC W5 done: kernel PR #146 (N05). Real STALE-SILENT gap patched fail-closed at SqliteStore funnel — post-seal manifested state immutable, manifest replace rejected (idempotent same-hash allowed). Parent verified: tightening only, unmanifested bookkeeping writable. Verdict PASS.
 - 21:15 UTC W7 done: kernel PR #147 (N09 dossier, docs-only). Model-axis verdict NO-GO today; cheapest unblock = CF Workers AI creds. Verdict PASS.
 - 21:30 UTC W6 done: PR #74 (N08). 2 dishonest-zero spots fixed (provider_eval tokens+totals -> None + coverage marker); all other surfaces already honest-null. Parent verified. Verdict PASS.
+- 21:50 UTC N10 done: deploy PR #7 (PARTIAL repro, 12 doc gaps, boot reached w/ 3 guesses). N11 integration review: 4 product PRs stack clean, merged-tree ext suite 395 pass/1 skip. HANDOFF WRITTEN — session wind-down (backlog exhausted).
