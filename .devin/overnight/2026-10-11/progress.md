@@ -14,3 +14,4 @@ Window: ~7h from 2026-10-10 ~19:00 UTC (≈08:30 ICT 2026-10-11). Lead: parent s
 - 19:50 UTC W1 done: PR #71 (N01+N02, IMPLEMENTATION+TEST-ONLY). Parent verified diff independently: labels.ts flag→UNKNOWN minimal+correct; trace_eval grades postcondition not status. Verdict PASS. Ext 375+bench 208+fe 94, CI green.
 - W2 docs landed: kernel PR #145 (ERP_WRITE_BYPASS_THREAT_MODEL.md + PR6_REVIEW.md, DOCS-ONLY, P0-flagged). W3 running N03.
 - 20:20 UTC W3 done: PR #72 (N03 taxonomy + arg-drift feedback middleware). Parent verified: observational-only patch, red->green SHAs confirmed, CI 11/11. Verdict PASS.
+- 20:45 UTC W4 done: PR #73 (N04). Real dishonesty found+fixed: mid-run SSE drop froze pane on stale status; now marked stream-lost. Parent verified diff minimal+product-owned. Verdict PASS.
