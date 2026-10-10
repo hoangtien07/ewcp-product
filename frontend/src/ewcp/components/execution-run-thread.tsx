@@ -28,6 +28,7 @@ import { DecisionCard } from "./decision-card";
 import { LifecycleBadge } from "./lifecycle-badge";
 import { ManifestCard } from "./manifest-card";
 import { StudioCard } from "./studio-card";
+import { UnverifiedClaimsChip } from "./unverified-claims-chip";
 
 const LIVE_STATUSES = new Set(["launching", "running", "pending_interrupt"]);
 
@@ -209,6 +210,9 @@ export function ExecutionRunThread({
               detail annotation */}
           <h2 className="flex items-center text-sm font-semibold">
             <LifecycleBadge status={lifecycleStatus(run, workrun)} />
+            <span className="ml-2">
+              <UnverifiedClaimsChip integrityFlag={run.integrity_flag} />
+            </span>
             {streaming && (
               <span className="text-muted-foreground ml-2 text-[10px] font-normal">
                 · trực tiếp

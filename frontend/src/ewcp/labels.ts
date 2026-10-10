@@ -136,6 +136,32 @@ export function taskModeLabel(mode: string): string {
   return TASK_MODE_LABEL[mode] ?? mode;
 }
 
+// Deliverable-integrity flag prefix — mirrors the extension's
+// `FLAG_CLAIMED_MISSING_PREFIX` (ewcp_core/deliverable_integrity.py). The
+// flag is the F2 delivery verdict on a general-lane run: it records the
+// `/mnt/user-data/**` deliverables the agent claimed but the host probe
+// could not find (or found empty). `verified`/`no_claims` carry no list.
+export const MISSING_CLAIMS_PREFIX = "claimed_artifacts_missing:";
+
+/** Decode `integrity_flag` → the claimed-but-missing artifact names.
+ * Returns null when the flag does not carry the missing-claims prefix
+ * (absent, `verified`, `no_claims`). The prefix itself is the verdict: a
+ * present-but-unparseable payload still means claims were flagged —
+ * returns `[]` so callers surface the generic unverified marker. */
+export function missingClaimedArtifacts(
+  flag: string | null | undefined,
+): string[] | null {
+  if (!flag?.startsWith(MISSING_CLAIMS_PREFIX)) return null;
+  try {
+    const parsed: unknown = JSON.parse(
+      flag.slice(MISSING_CLAIMS_PREFIX.length),
+    );
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // WP-A6 unified lifecycle vocabulary (kernel repo
 // docs/program/MASTER_EXECUTION_PLAN.md §WP-A6). ONE status story per run,
@@ -158,9 +184,10 @@ export type LifecycleStatus =
 
 /** One lifecycle answer for a run + its optional kernel view. Terminal
  * failures (failed/timeout/cancelled) and unrecognized values claim no
- * checkpoint — UNKNOWN, not a guess. */
+ * checkpoint — UNKNOWN, not a guess. `integrity_flag` is optional so
+ * synthetic run shapes (invoke step) keep compiling. */
 export function lifecycleStatus(
-  run: Pick<ExecutionRun, "status">,
+  run: Pick<ExecutionRun, "status"> & { integrity_flag?: string | null },
   workrun?: Pick<RunView, "status" | "decision"> | null,
 ): LifecycleStatus {
   if (workrun) {
@@ -192,7 +219,15 @@ export function lifecycleStatus(
   }
   switch (run.status) {
     case "completed":
-      return "agent_finished";
+      // N01/F2: `completed` is lifecycle truth only, not delivery truth.
+      // When the deliverable-integrity probe flagged missing claims, the
+      // run's self-report is unverified — claiming agent_finished would
+      // surface a false success, so the run claims no checkpoint (UNKNOWN).
+      // no_claims / verified / unassessed (null) keep it: a legit
+      // text-only answer is not a failure.
+      return missingClaimedArtifacts(run.integrity_flag) !== null
+        ? "UNKNOWN"
+        : "agent_finished";
     case "launching":
     case "running":
     case "pending_interrupt":
@@ -213,7 +248,7 @@ export const LIFECYCLE_LABEL: Record<LifecycleStatus, string> = {
 };
 
 export function lifecycleLabel(
-  run: Pick<ExecutionRun, "status">,
+  run: Pick<ExecutionRun, "status"> & { integrity_flag?: string | null },
   workrun?: Pick<RunView, "status" | "decision"> | null,
 ): string {
   return LIFECYCLE_LABEL[lifecycleStatus(run, workrun)];

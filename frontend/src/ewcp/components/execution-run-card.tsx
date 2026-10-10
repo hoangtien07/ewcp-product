@@ -11,20 +11,7 @@ import type { ExecutionRun } from "@/ewcp/api";
 import { lifecycleStatus, taskModeLabel } from "@/ewcp/labels";
 
 import { LifecycleBadge } from "./lifecycle-badge";
-
-const MISSING_CLAIMS_PREFIX = "claimed_artifacts_missing:";
-
-/** F2 guardrail surface — decode the advisory flag back to the claimed
- * paths that did not verify, for the chip tooltip. */
-function missingClaims(flag: string | null | undefined): string[] | null {
-  if (!flag?.startsWith(MISSING_CLAIMS_PREFIX)) return null;
-  try {
-    const parsed = JSON.parse(flag.slice(MISSING_CLAIMS_PREFIX.length));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+import { UnverifiedClaimsChip } from "./unverified-claims-chip";
 
 export function ExecutionRunCard({
   run,
@@ -35,7 +22,6 @@ export function ExecutionRunCard({
   active: boolean;
   onSelect: (run: ExecutionRun) => void;
 }) {
-  const missing = missingClaims(run.integrity_flag);
   return (
     <button
       type="button"
@@ -59,18 +45,7 @@ export function ExecutionRunCard({
               Chờ quyết định
             </span>
           )}
-          {missing !== null && (
-            <span
-              title={
-                missing.length > 0
-                  ? `Không tìm thấy: ${missing.join(", ")}`
-                  : "Kết quả tự báo cáo không xác minh được trên đĩa"
-              }
-              className="rounded border border-red-500/50 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/40 dark:text-red-300"
-            >
-              Tự báo cáo — chưa xác minh
-            </span>
-          )}
+          <UnverifiedClaimsChip integrityFlag={run.integrity_flag} />
         </span>
         <span className="text-muted-foreground text-[10px]">
           {taskModeLabel(run.task_mode)}
