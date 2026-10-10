@@ -345,17 +345,18 @@ class TestForgedTenantCannotOverrideBudgetAttribution:
         assert "wr-forged" not in json.dumps(admit)
 
     @pytest.mark.asyncio
-    async def test_without_agent_start_stamp_the_forge_would_reach_the_wire(self, session_factory: Any) -> None:
-        """CHARACTERIZATION — pins the ordering precondition the defense relies on.
+    async def test_without_agent_start_stamp_the_forge_still_never_reaches_the_wire(self, session_factory: Any) -> None:
+        """SECURITY REGRESSION — the admit must not depend on stamp ordering.
 
-        ``BudgetAdmissionMiddleware`` sits OUTER of the egress gate, so the
-        ONLY thing between forged client bytes and the kernel ledger is
-        ``abefore_agent``'s in-place stamp — i.e. the AgentMiddleware contract
-        that before_agent hooks run before any model call. This test proves
-        the exposure if that ordering is ever violated (a model call ahead of
-        the stamp admits under forged identity). If a future change removes or
-        reorders the agent-start stamp, this is the wire impact — revisit the
-        invariant, don't just update the expectations.
+        ``BudgetAdmissionMiddleware`` sits OUTER of the egress gate, so a
+        model call that ever bypasses ``abefore_agent`` would reach the wrap
+        chain unstamped. Post-#63 the admit resolves tenant/workrun identity
+        from server-owned sources (``tenant_id_getter`` / ``ExecutionRunMap``)
+        and never reads client-carried context keys, so even an unstamped
+        call can only admit under server-resolved identity — forged values
+        are dead input. If this ever breaks, the ordering exposure from the
+        original characterization finding is back: revisit the invariant,
+        don't just update the expectations.
         """
         wire = _KernelWire()
         service, contributors = await _install_service(_TENANTED_CONFIG, session_factory, wire)
@@ -376,5 +377,11 @@ class TestForgedTenantCannotOverrideBudgetAttribution:
 
         admits = wire.bodies("/budget/admissions")
         assert len(admits) == 1
-        assert admits[0]["tenant_id"] == "t-victim"
-        assert admits[0]["execution_run_id"] == "wr-forged"
+        admit = admits[0]
+        # Server-resolved identity survives the missing stamp.
+        assert admit["tenant_id"] == "t-server"
+        assert admit["execution_run_id"] == "wr-real"
+        # No forged value reaches the kernel ledger.
+        body = json.dumps(admit)
+        assert "t-victim" not in body
+        assert "wr-forged" not in body
