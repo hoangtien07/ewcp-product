@@ -199,26 +199,26 @@ describe("ExecutionRunThread", () => {
   // (a) The stream dies mid-run with NO terminal frame: the pane refreshes
   // the record once, then stops observing — today it shows the last-known
   // status as a settled display with no drop marker.
-  test("stream drop mid-run keeps showing the last-known status with no marker (pinned)", async () => {
+  test("stream drop mid-run keeps showing the last-known status (pinned)", async () => {
     const calls = stubAll(
       true,
       { ...RUN, status: "running" },
       { ...WORKRUN, status: "running", pending_questions: [] },
       "event: values\ndata: {}\n\n", // EOF — no `end`/`error` frame
     );
-    render(<ExecutionRunThread executionRunId="er-1" />);
+    const { container } = render(<ExecutionRunThread executionRunId="er-1" />);
     // the stream ended and the one-shot refresh ran
     await waitFor(() =>
-      expect(
-        calls.some((c) => c.url === "/api/ewcp/runs/er-1?refresh=1"),
-      ).toBe(true),
+      expect(calls.some((c) => c.url === "/api/ewcp/runs/er-1?refresh=1")).toBe(
+        true,
+      ),
     );
-    await waitFor(() =>
-      expect(screen.getByText("Đã tiếp nhận")).toBeTruthy(),
-    );
-    // pinned: no live indicator AND no disconnect marker — a silent frozen
-    // snapshot indistinguishable from a settled "accepted" display
-    expect(screen.queryByText(/trực tiếp/)).toBeNull();
+    await waitFor(() => expect(screen.getByText("Đã tiếp nhận")).toBeTruthy());
+    // pinned: the badge is the last-known durable record (literally true),
+    // and no live indicator remains in the header — pre-fix this settled
+    // display was indistinguishable from a clean end (the N04 dishonesty).
+    const header = container.querySelector("header");
+    expect(header?.textContent).not.toContain("trực tiếp");
   });
 
   test("stream drop mid-run marks the live observation as lost", async () => {
@@ -273,7 +273,7 @@ describe("ExecutionRunThread", () => {
       true,
       { ...RUN, status: "running" },
       { ...WORKRUN, status: "running", pending_questions: [] },
-      "event: values\ndata: {\"seq\":5}\n\nevent: values\ndata: {\"seq\":6}\n\nevent: end\ndata: {}\n\n",
+      'event: values\ndata: {"seq":5}\n\nevent: values\ndata: {"seq":6}\n\nevent: end\ndata: {}\n\n',
     );
     render(<ExecutionRunThread executionRunId="er-1" />);
     // the `end` frame itself renders too — 2 tail values + end, contiguous
@@ -292,9 +292,7 @@ describe("ExecutionRunThread", () => {
       pending_questions: [],
     });
     render(<ExecutionRunThread executionRunId="er-1" />);
-    await waitFor(() =>
-      expect(screen.getByText("Đã tiếp nhận")).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText("Đã tiếp nhận")).toBeTruthy());
     expect(screen.getByText(/Đang xử lý/)).toBeTruthy();
     expect(screen.queryByText("Agent hoàn tất")).toBeNull();
   });
@@ -306,9 +304,7 @@ describe("ExecutionRunThread", () => {
       pending_questions: [],
     });
     render(<ExecutionRunThread executionRunId="er-1" />);
-    await waitFor(() =>
-      expect(screen.getByText("Không rõ")).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText("Không rõ")).toBeTruthy());
     expect(screen.getByText(/Lỗi/)).toBeTruthy();
     expect(screen.queryByText("Agent hoàn tất")).toBeNull();
   });

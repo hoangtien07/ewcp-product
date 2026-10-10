@@ -10,7 +10,6 @@ cursor; these pins cover the contract a resuming consumer would hit.
 """
 
 import pytest
-
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -36,12 +35,7 @@ async def test_future_seq_cursor_falls_back_to_full_replay() -> None:
     ts, _, _ = stream.events[-1].id.rpartition("-")
     forged = f"{ts}-99"  # well-formed, same ms bucket, seq beyond latest
 
-    received = [
-        entry
-        async for entry in bridge.subscribe(
-            run_id, last_event_id=forged, heartbeat_interval=1.0
-        )
-    ]
+    received = [entry async for entry in bridge.subscribe(run_id, last_event_id=forged, heartbeat_interval=1.0)]
 
     assert [entry.event for entry in received[:-1]] == ["e0", "e1", "e2"]
     assert received[-1] is END_SENTINEL
@@ -62,17 +56,13 @@ async def test_cross_run_id_collision_is_accepted_as_resume_point() -> None:
     stream = bridge._get_or_create_stream(run_id)
     # Hand-build a retained buffer identical to what publish() leaves:
     for index in range(4):
-        stream.events.append(
-            StreamEvent(id=f"1000-{index}", event=f"e{index}", data={})
-        )
+        stream.events.append(StreamEvent(id=f"1000-{index}", event=f"e{index}", data={}))
     stream.start_offset = 0
 
     # "1000-2" could have been minted by a different run publishing in the
     # same millisecond — the retained-id check cannot tell foreign from own.
     received: list[StreamEvent] = []
-    async for entry in bridge.subscribe(
-        run_id, last_event_id="1000-2", heartbeat_interval=0.05
-    ):
+    async for entry in bridge.subscribe(run_id, last_event_id="1000-2", heartbeat_interval=0.05):
         if entry is HEARTBEAT_SENTINEL:
             break  # reached the live tail — stop measuring
         received.append(entry)

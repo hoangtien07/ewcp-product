@@ -60,6 +60,11 @@ export function ExecutionRunThread({
   const [canDecide, setCanDecide] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [streamEvents, setStreamEvents] = useState<RunStreamEvent[]>([]);
+  // N04: set when the SSE observation ended WITHOUT a terminal frame while
+  // the record is still live — the pane then shows a stale snapshot, which
+  // must be marked rather than presented as current.
+  const [streamLost, setStreamLost] = useState(false);
+  const sawTerminalRef = useRef(false);
   const [resumeText, setResumeText] = useState("");
   const [resuming, setResuming] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -117,12 +122,17 @@ export function ExecutionRunThread({
     if (!run?.join_url || !run.run_id || !LIVE_STATUSES.has(run.status)) return;
     const ctl = new AbortController();
     abortRef.current = ctl;
+    sawTerminalRef.current = false;
+    setStreamLost(false);
     setStreaming(true);
     joinRunStream(run.join_url, {
       signal: ctl.signal,
       onEvent: (ev) => {
         setStreamEvents((prev) => [...prev, ev].slice(-MAX_STREAM_EVENTS));
-        if (ev.event === "end" || ev.event === "error") ctl.abort();
+        if (ev.event === "end" || ev.event === "error") {
+          sawTerminalRef.current = true;
+          ctl.abort();
+        }
       },
     })
       .catch(() => {
@@ -133,6 +143,17 @@ export function ExecutionRunThread({
         getExecutionRun(executionRunId, { refresh: true })
           .then((r) => {
             setRun(r);
+            // N04: a stream that ended with no terminal frame while the
+            // run is still live is a dropped observation, not a settled
+            // end — mark it or the pane silently freezes on a stale
+            // snapshot (deps on join_url/run_id mean no auto-rejoin).
+            if (
+              !sawTerminalRef.current &&
+              !ctl.signal.aborted &&
+              LIVE_STATUSES.has(r.status)
+            ) {
+              setStreamLost(true);
+            }
             // the governed view is kernel-side truth and can transition
             // while the product stream is still open (kernel-first
             // dispatch) — re-read it here or a mount-time "running"
@@ -146,7 +167,12 @@ export function ExecutionRunThread({
             }
           })
           .catch(() => {
-            // refresh best-effort; next state change retries
+            // refresh best-effort; next state change retries. If the
+            // stream died AND the refresh failed, durable state is
+            // unknown — still mark the observation as lost.
+            if (!sawTerminalRef.current && !ctl.signal.aborted) {
+              setStreamLost(true);
+            }
           });
       });
     return () => ctl.abort();
@@ -233,6 +259,13 @@ export function ExecutionRunThread({
           {run.run_id ? ` · run ${run.run_id.slice(0, 8)}…` : ""}
         </p>
       </header>
+
+      {streamLost && (
+        <p className="rounded-md border border-amber-300 bg-amber-50/60 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+          Mất kết nối trực tiếp — hiển thị trạng thái cuối cùng đã biết; tải lại
+          trang để theo dõi tiếp.
+        </p>
+      )}
 
       {err && <p className="text-destructive text-xs">{err}</p>}
 
